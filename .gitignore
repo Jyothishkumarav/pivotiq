@@ -1,0 +1,40 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/
+.expo/
+.expo-shared/
+web-build/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Coverage
+coverage/
+
+# Native
+ios/Pods/
+android/.gradle/
+android/build/
+android/app/build/

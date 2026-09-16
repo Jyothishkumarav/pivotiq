@@ -1,0 +1,71 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: pivotiq-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pivotiq-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/pivotiq}
+      MONGO_DB_NAME: ${MONGO_DB_NAME:-pivotiq}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-true}
+      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL:-http://notification-service:4500}
+      NOTIFICATION_SERVICE_ENABLED: ${NOTIFICATION_SERVICE_ENABLED:-false}
+      NOTIFICATION_CHANNELS: ${NOTIFICATION_CHANNELS:-["telegram"]}
+      NOTIFICATION_TELEGRAM_CHAT_ID: ${NOTIFICATION_TELEGRAM_CHAT_ID:-}
+    ports:
+      - "4000:4000"
+
+  frontend-web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pivotiq-frontend-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      EXPO_PUBLIC_API_URL: ${EXPO_PUBLIC_API_URL:-http://localhost:4000}
+      EXPO_PUBLIC_GOOGLE_CLIENT_ID: ${EXPO_PUBLIC_GOOGLE_CLIENT_ID:-}
+    ports:
+      - "8081:80"
+
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: pivotiq-notification-service
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+    ports:
+      - "4500:4500"
+
+volumes:
+  mongo_data:

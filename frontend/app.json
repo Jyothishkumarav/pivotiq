@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "PivotIQ",
+    "slug": "pivotiq",
+    "scheme": "pivotiq",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.pivotiq.app"
+    },
+    "android": {
+      "package": "dev.pivotiq.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1220"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}
