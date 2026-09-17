@@ -38,6 +38,7 @@ async def ensure_indexes() -> None:
     await db.stock_details.create_index("symbol", unique=True)
     await db.stock_details.create_index("updatedAt")
     await db.fyers_credentials.create_index("userId", unique=True)
+    await db.intraday_triggers.create_index([("symbol", 1), ("date", 1)], unique=True)
 
 
 async def close_client() -> None:

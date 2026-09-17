@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -19,6 +20,7 @@ from app.schemas.stock import IntradaySnapshot
 
 logger = logging.getLogger(__name__)
 
+_IST = ZoneInfo("Asia/Kolkata")
 _DEDUP_TTL_SECONDS = 24 * 60 * 60  # one trigger notification per symbol per calendar day
 
 
@@ -51,6 +53,7 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
 
     title = f"{action_emoji} {snapshot.symbol} · {setup.action.upper()} setup triggered"
+    triggered_at_ist = setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M:%S IST") if setup.triggeredAt else "—"
     lines = [
         f"<b>{setup.bias.upper()}</b> setup on <b>{snapshot.symbol}</b>",
         "━━━━━━━━━━━━━━━",
@@ -59,6 +62,7 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         f"🛑 Stop-Loss: <code>₹{setup.stopLoss:,.2f}</code> (Δ ₹{sl_distance:,.2f} · {sl_distance_pct:.2f}% away)",
         f"🏁 Target: <code>₹{setup.target:,.2f}</code>",
         f"⚖️ Risk:Reward: <b>{setup.riskRewardRatio}</b>",
+        f"🕒 Triggered at: <b>{triggered_at_ist}</b>",
     ]
     return title, "\n".join(lines)
 

@@ -22,6 +22,9 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pymongo import MongoClient
+
+from app.config import get_settings
 from app.schemas.stock import IntradaySnapshot, TradeSetup
 from app.services import fyers_client
 from app.services.fyers_client import FyersError, FyersTokenExpired
@@ -32,6 +35,30 @@ IST = ZoneInfo("Asia/Kolkata")
 _OPENING_RANGE_CANDLES = 4  # 4 x 5-min = first 20 minutes (9:15-9:35 IST)
 _FINE_RESOLUTION_SECS = 180  # 3-min candles post-9:35 for finer trigger detection
 _CACHE_TTL_SECONDS = 60
+
+_sync_mongo_client: MongoClient | None = None
+
+
+def _trigger_collection():
+    """Sync (pymongo) collection handle — `compute_snapshot` runs in a worker
+    thread outside the asyncio loop, so it can't use the app's Motor client.
+
+    A short server-selection timeout keeps a Mongo hiccup from stalling
+    snapshot computation for pymongo's 30s default — callers fall back to
+    in-memory-only freezing (see `_TriggerStateCache`) if this raises.
+    """
+    global _sync_mongo_client
+    if _sync_mongo_client is None:
+        settings = get_settings()
+        _sync_mongo_client = MongoClient(
+            settings.mongo_uri, serverSelectionTimeoutMS=3000, connectTimeoutMS=3000,
+        )
+    settings = get_settings()
+    try:
+        db = _sync_mongo_client.get_default_database()
+    except Exception:
+        db = _sync_mongo_client[settings.mongo_db_name]
+    return db.intraday_triggers
 
 
 class _SnapshotCache:
@@ -55,6 +82,76 @@ class _SnapshotCache:
 
 
 _cache = _SnapshotCache()
+
+
+class _TriggerStateCache:
+    """Freezes the first trigger detected for a symbol each trading day.
+
+    `compute_snapshot` re-fetches candles every `_CACHE_TTL_SECONDS`, and the
+    monitor bar set (3-min vs 5-min fallback) can shift between calls — without
+    freezing, that reshuffling made `triggeredAt` (and even the action) drift
+    on every refresh. Once triggered, both are locked in until the next
+    trading day, and the notifier is told to fire exactly once.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, symbol: str, today: str) -> dict[str, Any] | None:
+        with self._lock:
+            state = self._store.get(symbol)
+            if state is not None and state["date"] == today:
+                return state
+
+        # Not in this process's memory — check Mongo (survives --reload
+        # restarts and is shared across worker processes).
+        try:
+            doc = _trigger_collection().find_one({"symbol": symbol, "date": today})
+        except Exception:
+            logger.exception("failed to read persisted trigger state for %s", symbol)
+            return None
+        if doc is None:
+            return None
+        # pymongo returns naive datetimes (BSON stores UTC but drops tzinfo on read) —
+        # reattach it, otherwise the frontend misreads the ISO string as local time.
+        state = {"date": doc["date"], "triggered_at": doc["triggeredAt"].replace(tzinfo=timezone.utc), "action": doc["action"]}
+        with self._lock:
+            self._store[symbol] = state
+        return state
+
+    def freeze(self, symbol: str, today: str, triggered_at: datetime, action: str) -> dict[str, Any]:
+        with self._lock:
+            state = self._store.get(symbol)
+            if state is not None and state["date"] == today:
+                return state
+
+        # First writer wins even across processes/threads — $setOnInsert only
+        # applies on the initial insert, so a concurrent freeze can't overwrite
+        # an already-persisted trigger with a later timestamp.
+        try:
+            _trigger_collection().update_one(
+                {"symbol": symbol, "date": today},
+                {"$setOnInsert": {"triggeredAt": triggered_at, "action": action}},
+                upsert=True,
+            )
+            doc = _trigger_collection().find_one({"symbol": symbol, "date": today})
+        except Exception:
+            logger.exception("failed to persist trigger state for %s — freezing in-memory only", symbol)
+            doc = None
+
+        if doc is not None:
+            state = {"date": doc["date"], "triggered_at": doc["triggeredAt"].replace(tzinfo=timezone.utc), "action": doc["action"]}
+        else:
+            state = {"date": today, "triggered_at": triggered_at, "action": action}
+
+        with self._lock:
+            self._store[symbol] = state
+        return state
+
+
+_trigger_state = _TriggerStateCache()
+
 
 
 def _today_ist_date() -> str:
@@ -234,7 +331,14 @@ def compute_snapshot(symbol: str, access_token: str) -> IntradaySnapshot | None:
     orb_close_ts = orb[-1]["ts"] + 300  # start of bar 4 + 5 min = 9:35 IST epoch
     triggered_at: datetime | None = None
     trigger_bar_secs = _FINE_RESOLUTION_SECS if candles_3m else 300
-    if swing_complete and setup_trend in ("up", "down"):
+
+    frozen = _trigger_state.get(symbol, today)
+    if frozen is not None:
+        # Already triggered earlier today — keep the original action + timestamp
+        # constant regardless of how the monitor bar set reshuffles on refresh.
+        setup_trend = frozen["action"]
+        triggered_at = frozen["triggered_at"]
+    elif swing_complete and setup_trend in ("up", "down"):
         for c in monitor:
             if c["ts"] < orb_close_ts:
                 continue
@@ -244,6 +348,10 @@ def compute_snapshot(symbol: str, access_token: str) -> IntradaySnapshot | None:
             if setup_trend == "down" and c["low"] < orb_low:
                 triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                 break
+        if triggered_at is not None:
+            frozen = _trigger_state.freeze(symbol, today, triggered_at, setup_trend)
+            triggered_at = frozen["triggered_at"]
+            setup_trend = frozen["action"]
 
     trade_setup = _build_trade_setup(
         current_price=current_price,

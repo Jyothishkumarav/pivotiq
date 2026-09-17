@@ -108,8 +108,12 @@ class RealProvider:
     def __init__(self) -> None:
         settings = get_settings()
         # Use a dedicated sync PyMongo client — RealProvider is used from the
-        # threadpool where sync I/O is appropriate.
-        self._client = MongoClient(settings.mongo_uri)
+        # threadpool where sync I/O is appropriate. `timeoutMS` (CSOT) bounds
+        # everything including the initial SRV/DNS lookup, so a DNS hiccup
+        # fails fast instead of hanging the request for ~20s+.
+        self._client = MongoClient(
+            settings.mongo_uri, timeoutMS=5000, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000,
+        )
         try:
             self._db = self._client.get_default_database()
         except Exception:
