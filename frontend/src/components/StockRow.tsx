@@ -45,7 +45,8 @@ function TrendDot({ trend }: { trend: IntradaySnapshot["trend"] }) {
 }
 
 function SetupPill({ setup }: { setup: TradeSetup }) {
-  const meta = SETUP_PILL_META[setup.action];
+  const slHit = !!setup.slHitAt;
+  const meta = slHit ? { color: "#FF6B85", label: "SL HIT" } : SETUP_PILL_META[setup.action];
   return (
     <View
       style={{
@@ -205,6 +206,13 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           <View style={{ flex: 0.85, alignItems: "flex-end" }}>
             {intraday?.tradeSetup ? (
               (() => {
+                if (intraday.tradeSetup.slHitAt) {
+                  return (
+                    <Text variant="caption" tone="negative">
+                      SL hit
+                    </Text>
+                  );
+                }
                 const ref = item.ltp ?? intraday.currentPrice;
                 const diff = ref - intraday.tradeSetup.entry;
                 const pct = intraday.tradeSetup.entry > 0

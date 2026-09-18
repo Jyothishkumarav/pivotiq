@@ -176,6 +176,7 @@ export interface TradeSetup {
   vwapPosition: "above" | "below" | "at";
   rationale: string;
   triggeredAt: string | null;
+  slHitAt: string | null;
 }
 
 export interface IntradaySnapshot {

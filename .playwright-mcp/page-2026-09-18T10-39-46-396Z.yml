@@ -1,0 +1,13 @@
+- generic [ref=e14]:
+  - generic [ref=e15]:
+    - generic [ref=e16]: P
+    - generic [ref=e18]: PivotIQ
+    - generic [ref=e19]: Watchlists, support-level alerts, and paper trading — all in one place.
+  - generic [ref=e20]:
+    - generic [ref=e21]:
+      - generic [ref=e22]: Sign in
+      - generic [ref=e23]: Choose how you want to continue.
+    - generic: Continue with Google
+    - generic [ref=e25]: Google Sign-In requires an OAuth client ID. Use demo access below.
+    - generic [ref=e26] [cursor=pointer]: Continue as demo user
+  - generic [ref=e28]: Paper trading only. No real money, no real order routing.

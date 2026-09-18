@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     mongo_uri: str = "mongodb://localhost:27017/pivotiq"
     mongo_db_name: str = "pivotiq"
-    redis_url: str | None = None  # optional; reserved for the deferred cache/alerts worker
+    redis_url: str | None = None  # e.g. redis://redis:6379/0; used by app.services.cache
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

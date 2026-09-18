@@ -88,6 +88,7 @@ class TradeSetup(BaseModel):
     vwapPosition: Literal["above", "below", "at"]
     rationale: str
     triggeredAt: datetime | None = None
+    slHitAt: datetime | None = None
 
 
 class IntradaySnapshot(BaseModel):

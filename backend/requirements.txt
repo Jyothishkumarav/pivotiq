@@ -9,4 +9,5 @@ python-jose[cryptography]==3.3.0
 google-auth==2.34.0
 python-multipart==0.0.9
 requests==2.32.3
+redis==5.0.8
 yfinance>=1.7.0

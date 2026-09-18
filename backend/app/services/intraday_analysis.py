@@ -113,12 +113,22 @@ class _TriggerStateCache:
             return None
         if doc is None:
             return None
-        # pymongo returns naive datetimes (BSON stores UTC but drops tzinfo on read) —
-        # reattach it, otherwise the frontend misreads the ISO string as local time.
-        state = {"date": doc["date"], "triggered_at": doc["triggeredAt"].replace(tzinfo=timezone.utc), "action": doc["action"]}
+        state = self._state_from_doc(doc)
         with self._lock:
             self._store[symbol] = state
         return state
+
+    @staticmethod
+    def _state_from_doc(doc: dict[str, Any]) -> dict[str, Any]:
+        # pymongo returns naive datetimes (BSON stores UTC but drops tzinfo on read) —
+        # reattach it, otherwise the frontend misreads the ISO string as local time.
+        sl_hit_at = doc.get("slHitAt")
+        return {
+            "date": doc["date"],
+            "triggered_at": doc["triggeredAt"].replace(tzinfo=timezone.utc),
+            "action": doc["action"],
+            "sl_hit_at": sl_hit_at.replace(tzinfo=timezone.utc) if sl_hit_at is not None else None,
+        }
 
     def freeze(self, symbol: str, today: str, triggered_at: datetime, action: str) -> dict[str, Any]:
         with self._lock:
@@ -140,11 +150,33 @@ class _TriggerStateCache:
             logger.exception("failed to persist trigger state for %s — freezing in-memory only", symbol)
             doc = None
 
-        if doc is not None:
-            state = {"date": doc["date"], "triggered_at": doc["triggeredAt"].replace(tzinfo=timezone.utc), "action": doc["action"]}
-        else:
-            state = {"date": today, "triggered_at": triggered_at, "action": action}
+        state = (
+            self._state_from_doc(doc)
+            if doc is not None
+            else {"date": today, "triggered_at": triggered_at, "action": action, "sl_hit_at": None}
+        )
 
+        with self._lock:
+            self._store[symbol] = state
+        return state
+
+    def freeze_sl_hit(self, symbol: str, today: str, sl_hit_at: datetime) -> dict[str, Any] | None:
+        """Locks in the stop-loss-hit timestamp exactly once per symbol/day.
+
+        Uses a conditional update (`slHitAt` must not already exist) so
+        concurrent pollers can't stomp on an already-recorded hit."""
+        try:
+            _trigger_collection().update_one(
+                {"symbol": symbol, "date": today, "slHitAt": {"$exists": False}},
+                {"$set": {"slHitAt": sl_hit_at}},
+            )
+            doc = _trigger_collection().find_one({"symbol": symbol, "date": today})
+        except Exception:
+            logger.exception("failed to persist SL-hit state for %s", symbol)
+            return None
+        if doc is None:
+            return None
+        state = self._state_from_doc(doc)
         with self._lock:
             self._store[symbol] = state
         return state
@@ -167,6 +199,7 @@ def _build_trade_setup(
     trend: str,
     range_forming: bool = False,
     triggered_at: datetime | None = None,
+    sl_hit_at: datetime | None = None,
 ) -> TradeSetup:
     """Turn the ORB numbers into a concrete plan: entry, SL, target, R:R."""
     vwap_tolerance = max(vwap * 0.001, 0.05)  # 0.1% or 5 paise, whichever bigger
@@ -241,6 +274,7 @@ def _build_trade_setup(
         vwapPosition=vwap_position,  # type: ignore[arg-type]
         rationale=rationale,
         triggeredAt=triggered_at,
+        slHitAt=sl_hit_at,
     )
 
 
@@ -353,6 +387,27 @@ def compute_snapshot(symbol: str, access_token: str) -> IntradaySnapshot | None:
             triggered_at = frozen["triggered_at"]
             setup_trend = frozen["action"]
 
+    # Once triggered, watch for the stop-loss level being breached — freezes
+    # exactly once per symbol/day, same pattern as the trigger itself, so the
+    # caller can fire a single "stop-loss hit, trade failed" alert.
+    sl_hit_at: datetime | None = frozen["sl_hit_at"] if frozen is not None else None
+    if frozen is not None and sl_hit_at is None and triggered_at is not None:
+        stop_loss = orb_low if setup_trend == "buy" else orb_high
+        sl_trigger_ts = triggered_at.timestamp() - trigger_bar_secs
+        for c in monitor:
+            if c["ts"] < sl_trigger_ts:
+                continue
+            if setup_trend == "buy" and c["low"] < stop_loss:
+                sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
+                break
+            if setup_trend == "sell" and c["high"] > stop_loss:
+                sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
+                break
+        if sl_hit_at is not None:
+            updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at)
+            if updated is not None:
+                sl_hit_at = updated["sl_hit_at"]
+
     trade_setup = _build_trade_setup(
         current_price=current_price,
         orb_high=orb_high,
@@ -361,6 +416,7 @@ def compute_snapshot(symbol: str, access_token: str) -> IntradaySnapshot | None:
         trend=setup_trend,
         range_forming=not swing_complete,
         triggered_at=triggered_at,
+        sl_hit_at=sl_hit_at,
     )
 
     snapshot = IntradaySnapshot(

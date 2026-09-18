@@ -1,9 +1,9 @@
 import React from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { useRouter, usePathname } from "expo-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Text } from "@/components/ui";
-import { settingsApi, type DataSourceMode } from "@/api/settings";
+import { fyersApi } from "@/api/fyers";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
 
 interface NavItem {
@@ -20,49 +20,23 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 function DataSourceToggle() {
-  const queryClient = useQueryClient();
   const { data } = useQuery({
-    queryKey: ["settings", "data-source"],
-    queryFn: settingsApi.getDataSource,
+    queryKey: ["fyers", "status"],
+    queryFn: fyersApi.status,
+    refetchInterval: 60_000,
   });
 
-  const mutation = useMutation({
-    mutationFn: (mode: DataSourceMode) => settingsApi.setDataSource(mode),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["settings", "data-source"] });
-      queryClient.invalidateQueries({ queryKey: ["quote"] });
-      queryClient.invalidateQueries({ queryKey: ["fundamentals"] });
-      queryClient.invalidateQueries({ queryKey: ["support-levels"] });
-      queryClient.invalidateQueries({ queryKey: ["stock-search"] });
-      queryClient.invalidateQueries({ queryKey: ["watchlists"] });
-      queryClient.invalidateQueries({ queryKey: ["positions"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-summary"] });
-    },
-  });
-
-  const mode = data?.mode ?? "real";
-  const isReal = mode === "real";
-  const dotColor = isReal ? colors.positive : colors.warning;
-  const label = isReal ? "Live · Yahoo" : "Demo · Mock";
-  const nextLabel = isReal ? "Switch to demo" : "Switch to live";
+  const connected = data?.connected ?? false;
+  const dotColor = connected ? colors.positive : colors.negative;
+  const label = connected ? "Live · Fyers connected" : "Live API not connected";
 
   return (
-    <Pressable
-      onPress={() => mutation.mutate(isReal ? "mock" : "real")}
-      disabled={mutation.isPending}
-      style={({ hovered }: any) => [
-        styles.dataSource,
-        hovered && { backgroundColor: colors.surfaceElevated, borderColor: colors.border },
-      ]}
-    >
+    <View style={styles.dataSource}>
       <View style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: dotColor }} />
       <Text variant="caption" tone="secondary">
-        {mutation.isPending ? "Switching…" : label}
+        {label}
       </Text>
-      <Text variant="caption" tone="muted">
-        · {nextLabel}
-      </Text>
-    </Pressable>
+    </View>
   );
 }
 

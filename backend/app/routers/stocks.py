@@ -18,7 +18,7 @@ from app.schemas.stock import (
 from app.services import intraday_analysis, market_data, support_levels
 from app.services.fyers_client import FyersTokenExpired
 from app.services.market_context import get_active_fyers_token
-from app.services.notification_client import notify_trade_setup_triggered
+from app.services.notification_client import notify_stop_loss_hit, notify_trade_setup_triggered
 
 router = APIRouter(prefix="/stocks", tags=["stocks"], dependencies=[Depends(with_fyers_context)])
 
@@ -108,6 +108,7 @@ async def get_intraday_snapshot(
             detail="No intraday data yet — is the market open?",
         )
     asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot))
+    asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot))
     return snapshot
 
 
@@ -135,6 +136,7 @@ async def batch_intraday_snapshots(
     for _, snap in results:
         if snap is not None:
             asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap))
+            asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap))
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),
