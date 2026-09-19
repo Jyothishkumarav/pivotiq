@@ -245,16 +245,18 @@ def compute_setup(
         else:
             breakout_idx, action = breakout
             orb_break_price = monitor[breakout_idx]["close"]
+            orb_level = orb_high if action == "buy" else orb_low
             sl_wide = orb_macro_sl_buy if action == "buy" else orb_macro_sl_sell
 
             support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
             if support_res is None:
                 triggered_at, trigger_price = None, None
-                entry = orb_break_price
+                entry = orb_level
                 stop_loss = sl_wide
                 status = "pending_entry"
                 rationale = (
-                    f"Broke {'above' if action == 'buy' else 'below'} the opening range at ₹{orb_break_price:.2f}. "
+                    f"Broke {'above' if action == 'buy' else 'below'} the opening range ₹{orb_level:.2f} "
+                    f"(candle closed at ₹{orb_break_price:.2f}). "
                     f"Watching for pullback and first supporting green candle."
                 )
             else:
@@ -263,7 +265,7 @@ def compute_setup(
                 if hist_triggered_at is not None:
                     triggered_at = hist_triggered_at
                     trigger_price = support_trigger_level
-                    entry = orb_break_price
+                    entry = orb_level
                     stop_loss = tight_stop
                     status = "triggered"
                     if action == "buy":
@@ -273,8 +275,8 @@ def compute_setup(
                         mode_desc = "red candle closed below" if entry_mode == "close" else "broke below"
                         ref_desc = "green supporting candle low"
                     rationale = (
-                        f"Broke ORB at ₹{orb_break_price:.2f}, pulled back, and {mode_desc} "
-                        f"{ref_desc} ₹{support_trigger_level:.2f}. "
+                        f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}), "
+                        f"pulled back, and {mode_desc} {ref_desc} ₹{support_trigger_level:.2f}. "
                         f"Tight stop ₹{tight_stop:.2f} · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})."
                     )
                 else:
@@ -287,39 +289,40 @@ def compute_setup(
                         if ltp_crossed:
                             triggered_at = datetime.now(tz=timezone.utc)
                             trigger_price = support_trigger_level
-                            entry = orb_break_price
+                            entry = orb_level
                             stop_loss = tight_stop
                             status = "triggered"
                             rationale = (
-                                f"Broke ORB at ₹{orb_break_price:.2f}, pulled back, and LTP "
+                                f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}), "
+                                f"pulled back, and LTP "
                                 f"{'broke above' if action == 'buy' else 'broke below'} the green supporting candle "
                                 f"{'high' if action == 'buy' else 'low'} ₹{support_trigger_level:.2f}. "
                                 f"Tight stop ₹{tight_stop:.2f} · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})."
                             )
                         else:
                             triggered_at, trigger_price = None, support_trigger_level
-                            entry = orb_break_price
+                            entry = orb_level
                             stop_loss = tight_stop
                             status = "pending_entry"
                             rationale = (
-                                f"Broke {'above' if action == 'buy' else 'below'} ORB at ₹{orb_break_price:.2f}. "
+                                f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
                                 f"Green supporting candle formed — waiting for LTP to "
                                 f"{'cross above' if action == 'buy' else 'break below'} ₹{support_trigger_level:.2f}."
                             )
                     else:
                         # In 'close' mode, wait for the 3m candle to close
                         triggered_at, trigger_price = None, support_trigger_level
-                        entry = orb_break_price
+                        entry = orb_level
                         stop_loss = tight_stop
                         status = "pending_entry"
                         if action == "buy":
                             rationale = (
-                                f"Broke above ORB at ₹{orb_break_price:.2f}. "
+                                f"Broke above ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
                                 f"Green supporting candle formed — waiting for 3m candle to close above ₹{support_trigger_level:.2f}."
                             )
                         else:
                             rationale = (
-                                f"Broke below ORB at ₹{orb_break_price:.2f}. "
+                                f"Broke below ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
                                 f"Green supporting candle formed — waiting for red 3m candle to close below ₹{support_trigger_level:.2f}."
                             )
 

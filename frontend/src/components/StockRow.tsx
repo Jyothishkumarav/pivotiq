@@ -320,9 +320,10 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                   );
                 }
                 const ref = effectiveLtp ?? intraday.currentPrice;
-                const diff = ref - intraday.tradeSetup.entry;
-                const pct = intraday.tradeSetup.entry > 0
-                  ? (diff / intraday.tradeSetup.entry) * 100
+                const tradeEntry = intraday.tradeSetup.triggerPrice ?? intraday.tradeSetup.entry;
+                const diff = ref - tradeEntry;
+                const pct = tradeEntry > 0
+                  ? (diff / tradeEntry) * 100
                   : 0;
                 const near = Math.abs(pct) < 0.05;
                 // Once triggered, this is purely "is price now favorable vs.
@@ -359,10 +360,11 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
-                const rawDiff = effectiveLtp - intraday.tradeSetup.entry;
+                const tradeEntry = intraday.tradeSetup.triggerPrice ?? intraday.tradeSetup.entry;
+                const rawDiff = effectiveLtp - tradeEntry;
                 const signedDiff = intraday.tradeSetup.action === "sell" ? -rawDiff : rawDiff;
-                const pct = intraday.tradeSetup.entry > 0
-                  ? (signedDiff / intraday.tradeSetup.entry) * 100
+                const pct = tradeEntry > 0
+                  ? (signedDiff / tradeEntry) * 100
                   : 0;
                 const tone: "positive" | "negative" | "muted" =
                   pct > 0.05 ? "positive" : pct < -0.05 ? "negative" : "muted";
