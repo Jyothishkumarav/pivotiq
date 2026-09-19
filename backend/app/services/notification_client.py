@@ -65,10 +65,15 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
     bias_label = (setup.bias or "neutral").capitalize()
 
-    entry_sl   = abs(setup.entry - setup.stopLoss)
+    # Actual trade entry price: for strategies with a triggerPrice (e.g. pullback, pullback_support),
+    # setup.triggerPrice is the actual fill/entry level, while setup.entry is the initial breakout level.
+    trade_entry = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    breakout_level = setup.entry if (setup.triggerPrice is not None and setup.triggerPrice != setup.entry) else None
+
+    entry_sl   = abs(trade_entry - setup.stopLoss)
     entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
-    tgt_delta  = abs(setup.target - setup.entry)
-    tgt_delta_p = round((tgt_delta / setup.entry) * 100, 2) if setup.entry else 0.0
+    tgt_delta  = abs(setup.target - trade_entry)
+    tgt_delta_p = round((tgt_delta / trade_entry) * 100, 2) if trade_entry else 0.0
     ltp_sl     = abs(snapshot.currentPrice - setup.stopLoss)
     ltp_sl_p   = round((ltp_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
 
@@ -86,7 +91,13 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         "",
         # ── Price levels (plain-label rows) ──────────────────────────────
         f"LTP        ·  <b>₹{snapshot.currentPrice:,.2f}</b>",
-        f"Entry      ·  <code>₹{setup.entry:,.2f}</code>",
+        f"Entry      ·  <code>₹{trade_entry:,.2f}</code>",
+    ]
+
+    if breakout_level is not None:
+        lines.append(f"Breakout   ·  <code>₹{breakout_level:,.2f}</code>")
+
+    lines.extend([
         f"Target     ·  <code>₹{setup.target:,.2f}</code>  <i>(+₹{tgt_delta:,.2f} / +{tgt_delta_p:.2f}%)</i>",
         f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>",
         "",
@@ -99,7 +110,7 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         "",
         # ── Footer (emoji ok, single line) ───────────────────────────────
         f"🔗 {_tradingview_link(snapshot.symbol)}",
-    ]
+    ])
 
     body = "\n".join(lines)
     return title, body
@@ -111,11 +122,12 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
 
-    entry_sl   = abs(setup.entry - setup.stopLoss)
+    trade_entry = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    entry_sl   = abs(trade_entry - setup.stopLoss)
     entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
-    pnl        = snapshot.currentPrice - setup.entry
+    pnl        = snapshot.currentPrice - trade_entry
     pnl_abs    = abs(pnl)
-    pnl_pct    = abs(round((pnl / setup.entry) * 100, 2)) if setup.entry else 0.0
+    pnl_pct    = abs(round((pnl / trade_entry) * 100, 2)) if trade_entry else 0.0
     pnl_sign   = "+" if pnl >= 0 else "−"
 
     triggered_at = (
@@ -135,7 +147,7 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         f"Strategy  ·  <b>{strategy_label}</b>  |  {setup.action.upper()} trade closed",
         "",
         # ── Trade levels (plain-label rows) ──────────────────────────────
-        f"Entry      ·  {action_emoji} <code>₹{setup.entry:,.2f}</code>",
+        f"Entry      ·  {action_emoji} <code>₹{trade_entry:,.2f}</code>",
         f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>",
         f"Exit       ·  <b>₹{snapshot.currentPrice:,.2f}</b>  <i>({pnl_sign}₹{pnl_abs:,.2f} / {pnl_sign}{pnl_pct:.2f}%)</i>",
         "",
@@ -206,6 +218,7 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
         logger.exception("failed to reach notification-service for %s trigger alert", snapshot.symbol)
         return
 
+    trade_entry = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
     # Only cache after a confirmed send, so a failed/rejected request can retry on the next poll.
     cache.set_json(
         cache_key,
@@ -214,7 +227,8 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
             "strategy": setup.strategy,
             "action": setup.action,
             "status": "triggered",
-            "entry": setup.entry,
+            "entry": trade_entry,
+            "breakoutPrice": setup.entry if trade_entry != setup.entry else None,
             "stopLoss": setup.stopLoss,
             "target": setup.target,
             "triggeredAt": setup.triggeredAt.isoformat(),
