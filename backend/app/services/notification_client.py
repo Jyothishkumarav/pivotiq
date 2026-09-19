@@ -77,10 +77,11 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     ltp_sl     = abs(snapshot.currentPrice - setup.stopLoss)
     ltp_sl_p   = round((ltp_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
 
-    has_msl = setup.slWide is not None and setup.slWide != setup.stopLoss
-    if has_msl:
-        entry_msl   = abs(trade_entry - setup.slWide)  # type: ignore[operator]
-        entry_msl_p = round((entry_msl / setup.slWide) * 100, 2) if setup.slWide else 0.0  # type: ignore[operator]
+    has_wide_sl = setup.slWide is not None
+    wide_diff   = abs(trade_entry - setup.slWide) if has_wide_sl and setup.slWide else 0.0
+    wide_diff_p = round((wide_diff / setup.slWide) * 100, 2) if has_wide_sl and setup.slWide else 0.0
+    ltp_msl     = abs(snapshot.currentPrice - setup.slWide) if has_wide_sl and setup.slWide else 0.0
+    ltp_msl_p   = round((ltp_msl / setup.slWide) * 100, 2) if has_wide_sl and setup.slWide else 0.0
 
     triggered_at = (
         setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M IST")
@@ -103,18 +104,22 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
 
     lines.append(f"Target     ·  <code>₹{setup.target:,.2f}</code>  <i>(+₹{tgt_delta:,.2f} / +{tgt_delta_p:.2f}%)</i>")
+    lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Δ₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
 
-    if has_msl:
-        lines.append(f"Tight SL   ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
-        lines.append(f"MSL        ·  <code>₹{setup.slWide:,.2f}</code>  <i>(−₹{entry_msl:,.2f} / −{entry_msl_p:.2f}%)</i>")
-    else:
-        lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
+    if has_wide_sl and setup.slWide:
+        lines.append(f"Main Stop  ·  <code>₹{setup.slWide:,.2f}</code>  <i>(MΔ₹{wide_diff:,.2f} / −{wide_diff_p:.2f}%)</i>")
 
     lines.extend([
         "",
         # ── Risk stats ────────────────────────────────────────────────────
         f"Risk:Reward   ·  <b>1 : {setup.riskRewardRatio}</b>",
         f"SL from LTP   ·  ₹{ltp_sl:,.2f}  ({ltp_sl_p:.2f}%)",
+    ])
+
+    if has_wide_sl and setup.slWide:
+        lines.append(f"MSL from LTP  ·  ₹{ltp_msl:,.2f}  ({ltp_msl_p:.2f}%)")
+
+    lines.extend([
         "",
         # ── Timing ────────────────────────────────────────────────────────
         f"Triggered  ·  <b>{triggered_at}</b>",
@@ -137,15 +142,15 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     breakout_level = setup.entry if (setup.triggerPrice is not None and setup.triggerPrice != setup.entry) else None
     entry_sl   = abs(trade_entry - setup.stopLoss)
     entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
+
+    has_wide_sl = setup.slWide is not None
+    wide_diff   = abs(trade_entry - setup.slWide) if has_wide_sl and setup.slWide else 0.0
+    wide_diff_p = round((wide_diff / setup.slWide) * 100, 2) if has_wide_sl and setup.slWide else 0.0
+
     pnl        = snapshot.currentPrice - trade_entry
     pnl_abs    = abs(pnl)
     pnl_pct    = abs(round((pnl / trade_entry) * 100, 2)) if trade_entry else 0.0
     pnl_sign   = "+" if pnl >= 0 else "−"
-
-    has_msl = setup.slWide is not None and setup.slWide != setup.stopLoss
-    if has_msl:
-        entry_msl   = abs(trade_entry - setup.slWide)  # type: ignore[operator]
-        entry_msl_p = round((entry_msl / setup.slWide) * 100, 2) if setup.slWide else 0.0  # type: ignore[operator]
 
     triggered_at = (
         setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M IST")
@@ -170,11 +175,10 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     if breakout_level is not None:
         lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
 
-    if has_msl:
-        lines.append(f"Tight SL   ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
-        lines.append(f"MSL        ·  <code>₹{setup.slWide:,.2f}</code>  <i>(−₹{entry_msl:,.2f} / −{entry_msl_p:.2f}%)</i>")
-    else:
-        lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
+    lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Δ₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
+
+    if has_wide_sl and setup.slWide:
+        lines.append(f"Main Stop  ·  <code>₹{setup.slWide:,.2f}</code>  <i>(MΔ₹{wide_diff:,.2f} / −{wide_diff_p:.2f}%)</i>")
 
     lines.extend([
         f"Exit       ·  <b>₹{snapshot.currentPrice:,.2f}</b>  <i>({pnl_sign}₹{pnl_abs:,.2f} / {pnl_sign}{pnl_pct:.2f}%)</i>",
@@ -258,6 +262,7 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
             "entry": trade_entry,
             "breakoutPrice": setup.entry if trade_entry != setup.entry else None,
             "stopLoss": setup.stopLoss,
+            "slWide": setup.slWide,
             "target": setup.target,
             "triggeredAt": setup.triggeredAt.isoformat(),
         },
