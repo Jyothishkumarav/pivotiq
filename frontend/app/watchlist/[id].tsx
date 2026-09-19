@@ -229,81 +229,86 @@ function EntryModeToggle({
   onChange: (mode: "close" | "touch") => void;
 }) {
   return (
-    <View style={{ gap: 4, marginTop: 4 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          backgroundColor: colors.surfaceElevated,
-          borderRadius: 8,
-          padding: 2,
-          borderWidth: 1,
-          borderColor: colors.borderSubtle,
-          alignSelf: "flex-start",
-        }}
-      >
-        <Pressable
-          onPress={() => onChange("close")}
-          style={({ hovered }: any) => ({
-            paddingHorizontal: spacing.sm,
-            paddingVertical: 5,
-            borderRadius: 6,
-            backgroundColor:
-              value === "close"
-                ? colors.accent
-                : hovered
-                  ? colors.surfaceHover
-                  : "transparent",
+    <View style={{ gap: 4, marginTop: 6 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+        <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+          Trigger on:
+        </Text>
+        <View
+          style={{
             flexDirection: "row",
             alignItems: "center",
-            gap: 5,
-          })}
+            backgroundColor: colors.surfaceElevated,
+            borderRadius: 8,
+            padding: 3,
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            gap: 4,
+          }}
         >
-          <Text
-            variant="caption"
-            style={{
-              fontWeight: "600",
-              color: value === "close" ? "#FFFFFF" : colors.textSecondary,
-              fontSize: 12,
-            }}
+          <Pressable
+            onPress={() => onChange("close")}
+            style={({ hovered }: any) => ({
+              paddingHorizontal: spacing.md,
+              paddingVertical: 6,
+              borderRadius: 6,
+              backgroundColor:
+                value === "close"
+                  ? colors.accent
+                  : hovered
+                    ? colors.surfaceHover
+                    : "transparent",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+            })}
           >
-            🕯️ 3m Close
-          </Text>
-        </Pressable>
+            <Text
+              variant="caption"
+              style={{
+                fontWeight: "700",
+                color: value === "close" ? "#FFFFFF" : colors.textSecondary,
+                fontSize: 12,
+              }}
+            >
+              🕯️ 3 Min Candle
+            </Text>
+          </Pressable>
 
-        <Pressable
-          onPress={() => onChange("touch")}
-          style={({ hovered }: any) => ({
-            paddingHorizontal: spacing.sm,
-            paddingVertical: 5,
-            borderRadius: 6,
-            backgroundColor:
-              value === "touch"
-                ? colors.accent
-                : hovered
-                  ? colors.surfaceHover
-                  : "transparent",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 5,
-          })}
-        >
-          <Text
-            variant="caption"
-            style={{
-              fontWeight: "600",
-              color: value === "touch" ? "#FFFFFF" : colors.textSecondary,
-              fontSize: 12,
-            }}
+          <Pressable
+            onPress={() => onChange("touch")}
+            style={({ hovered }: any) => ({
+              paddingHorizontal: spacing.md,
+              paddingVertical: 6,
+              borderRadius: 6,
+              backgroundColor:
+                value === "touch"
+                  ? colors.accent
+                  : hovered
+                    ? colors.surfaceHover
+                    : "transparent",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+            })}
           >
-            ⚡ LTP Break
-          </Text>
-        </Pressable>
+            <Text
+              variant="caption"
+              style={{
+                fontWeight: "700",
+                color: value === "touch" ? "#FFFFFF" : colors.textSecondary,
+                fontSize: 12,
+              }}
+            >
+              ⚡ Latest Price
+            </Text>
+          </Pressable>
+        </View>
       </View>
       <Text variant="caption" tone="muted" style={{ fontSize: 11, lineHeight: 14 }}>
         {value === "close"
-          ? "3m Close: Confirms entry only after 3m candle closes beyond supporting candle (filters false wicks)"
-          : "LTP Break: Triggers entry immediately on live price breach"}
+          ? "3 Min Candle: Confirms entry only after 3m candle closes beyond supporting candle (filters false wicks)"
+          : "Latest Price: Triggers entry immediately on live price / wick breach"}
       </Text>
     </View>
   );
@@ -527,12 +532,10 @@ export default function WatchlistDetailScreen() {
             onChange={(next) => strategyMutation.mutate(next)}
             loading={strategyMutation.isPending}
           />
-          {strategy === "orb_pullback_support" && (
-            <EntryModeToggle
-              value={entryMode}
-              onChange={handleEntryModeChange}
-            />
-          )}
+          <EntryModeToggle
+            value={entryMode}
+            onChange={handleEntryModeChange}
+          />
         </View>
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <Button
