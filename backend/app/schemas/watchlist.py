@@ -36,6 +36,7 @@ class WatchlistOut(BaseModel):
     userId: str
     name: str
     sortPreference: str = "proximity"
+    strategy: str = "orb_vwap"
     createdAt: datetime
     updatedAt: datetime
     items: list[WatchlistItemOut] = []

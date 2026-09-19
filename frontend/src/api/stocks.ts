@@ -21,6 +21,6 @@ export const stocksApi = {
     apiClient.get<CandlesResponse>(`/stocks/${symbol}/candles`, { period, interval }),
   intradaySnapshot: (symbol: string) =>
     apiClient.get<IntradaySnapshot>(`/stocks/${symbol}/intraday-snapshot`),
-  intradaySnapshots: (symbols: string[]) =>
-    apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", { symbols }),
+  intradaySnapshots: (symbols: string[], strategy = "orb_vwap") =>
+    apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", { symbols, strategy }),
 };

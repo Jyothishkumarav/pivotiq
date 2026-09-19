@@ -3,20 +3,22 @@
 Calls out over plain HTTP (`POST /api/v1/notifications`) — no import
 dependency on the notification-service code, same as any external caller.
 A shared Redis-backed cache (see `app.services.cache`) stops the same
-breakout from re-notifying on every watchlist/details poll (the intraday
-endpoints are polled every few seconds) by remembering that a symbol+action
-was already triggered for a fixed TTL window.
+breakout from re-notifying on every watchlist/details poll by remembering that
+a symbol+strategy+date+action was already triggered for a fixed TTL window.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
 
 from app.config import get_settings
 from app.schemas.stock import IntradaySnapshot
+from app.schemas.strategy import STRATEGY_SHORT_NAMES, StrategyName
 from app.services.cache import get_cache_client
 
 logger = logging.getLogger(__name__)
@@ -25,52 +27,134 @@ _IST = ZoneInfo("Asia/Kolkata")
 _TRIGGER_CACHE_TTL_SECONDS = 8 * 60 * 60  # 8h: roughly one trading session
 
 
-def _trigger_cache_key(symbol: str, action: str) -> str:
-    return f"notif:trigger:{symbol.upper()}:{action}"
+def _trigger_cache_key(symbol: str, strategy: str, action: str, date_str: str) -> str:
+    return f"notif:trigger:{symbol.upper()}:{strategy}:{date_str}:{action}"
+
+
+def _sl_hit_cache_key(symbol: str, strategy: str, action: str, date_str: str) -> str:
+    return f"notif:slhit:{symbol.upper()}:{strategy}:{date_str}:{action}"
+
+
+def _tradingview_link(symbol: str) -> str:
+    return f'<a href="https://www.tradingview.com/chart/?symbol=NSE:{symbol.upper()}">View chart on TradingView</a>'
+
+
+def get_user_enabled_strategies(user_id: Any | None = None) -> set[str]:
+    """Return the set of enabled strategies for notifications.
+    If user_id is provided, looks in MongoDB user_settings.
+    Falls back to settings.notification_enabled_strategies."""
+    settings = get_settings()
+    if not user_id:
+        return set(settings.notification_enabled_strategies)
+
+    try:
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        doc = db.user_settings.find_one({"userId": str(user_id), "type": "strategy_notifications"})
+        if doc and "enabledStrategies" in doc:
+            return set(doc["enabledStrategies"])
+    except Exception as exc:
+        logger.warning("Could not read user strategy notifications setting: %s", exc)
+    return set(settings.notification_enabled_strategies)
 
 
 def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
-    """Builds a Telegram-HTML-formatted body (bold/code/emoji render nicely
-    in the live channel; other channels just display it as plain text)."""
+    """Telegram-HTML alert. Emojis only in headers to avoid line-height inflation on data rows."""
     setup = snapshot.tradeSetup
-    sl_distance = abs(snapshot.currentPrice - setup.stopLoss)
-    sl_distance_pct = round((sl_distance / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
+    strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
+    bias_label = (setup.bias or "neutral").capitalize()
 
-    title = f"{action_emoji} {snapshot.symbol} · {setup.action.upper()} setup triggered"
-    triggered_at_ist = setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M:%S IST") if setup.triggeredAt else "—"
+    entry_sl   = abs(setup.entry - setup.stopLoss)
+    entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
+    tgt_delta  = abs(setup.target - setup.entry)
+    tgt_delta_p = round((tgt_delta / setup.entry) * 100, 2) if setup.entry else 0.0
+    ltp_sl     = abs(snapshot.currentPrice - setup.stopLoss)
+    ltp_sl_p   = round((ltp_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
+
+    triggered_at = (
+        setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M IST")
+        if setup.triggeredAt else "—"
+    )
+
+    title = f"{action_emoji} {snapshot.symbol} · {setup.action.upper()} · {strategy_label}"
+
     lines = [
-        f"<b>{setup.bias.upper()}</b> setup on <b>{snapshot.symbol}</b>",
-        "━━━━━━━━━━━━━━━",
-        f"💰 Price: <b>₹{snapshot.currentPrice:,.2f}</b>",
-        f"📍 Entry: <code>₹{setup.entry:,.2f}</code>",
-        f"🛑 Stop-Loss: <code>₹{setup.stopLoss:,.2f}</code> (Δ ₹{sl_distance:,.2f} · {sl_distance_pct:.2f}% away)",
-        f"🏁 Target: <code>₹{setup.target:,.2f}</code>",
-        f"⚖️ Risk:Reward: <b>{setup.riskRewardRatio}</b>",
-        f"🕒 Triggered at: <b>{triggered_at_ist}</b>",
+        # ── Header (emojis allowed here) ──────────────────────────────────
+        f"{action_emoji} <b>{setup.action.upper()} — {snapshot.symbol}</b>",
+        f"Strategy  ·  <b>{strategy_label}</b>  |  {bias_label} bias",
+        "",
+        # ── Price levels (plain-label rows) ──────────────────────────────
+        f"LTP        ·  <b>₹{snapshot.currentPrice:,.2f}</b>",
+        f"Entry      ·  <code>₹{setup.entry:,.2f}</code>",
+        f"Target     ·  <code>₹{setup.target:,.2f}</code>  <i>(+₹{tgt_delta:,.2f} / +{tgt_delta_p:.2f}%)</i>",
+        f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>",
+        "",
+        # ── Risk stats ────────────────────────────────────────────────────
+        f"Risk:Reward   ·  <b>1 : {setup.riskRewardRatio}</b>",
+        f"SL from LTP   ·  ₹{ltp_sl:,.2f}  ({ltp_sl_p:.2f}%)",
+        "",
+        # ── Timing ────────────────────────────────────────────────────────
+        f"Triggered  ·  <b>{triggered_at}</b>",
+        "",
+        # ── Footer (emoji ok, single line) ───────────────────────────────
+        f"🔗 {_tradingview_link(snapshot.symbol)}",
     ]
-    return title, "\n".join(lines)
+
+    body = "\n".join(lines)
+    return title, body
 
 
 def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
+    """Telegram-HTML SL-hit alert. Emojis only in headers to avoid line-height inflation."""
     setup = snapshot.tradeSetup
-    title = f"🛑 {snapshot.symbol} · Stop-loss hit — trade failed"
-    triggered_at_ist = setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M:%S IST") if setup.triggeredAt else "—"
-    sl_hit_at_ist = setup.slHitAt.astimezone(_IST).strftime("%d %b %Y, %H:%M:%S IST") if setup.slHitAt else "—"
+    strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
+    action_emoji = "🟢" if setup.action == "buy" else "🔴"
+
+    entry_sl   = abs(setup.entry - setup.stopLoss)
+    entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
+    pnl        = snapshot.currentPrice - setup.entry
+    pnl_abs    = abs(pnl)
+    pnl_pct    = abs(round((pnl / setup.entry) * 100, 2)) if setup.entry else 0.0
+    pnl_sign   = "+" if pnl >= 0 else "−"
+
+    triggered_at = (
+        setup.triggeredAt.astimezone(_IST).strftime("%d %b %Y, %H:%M IST")
+        if setup.triggeredAt else "—"
+    )
+    sl_hit_at = (
+        setup.slHitAt.astimezone(_IST).strftime("%d %b %Y, %H:%M IST")
+        if setup.slHitAt else "—"
+    )
+
+    title = f"🛑 {snapshot.symbol} · Stop-Loss Hit · {strategy_label}"
+
     lines = [
-        f"<b>{setup.action.upper()}</b> setup on <b>{snapshot.symbol}</b> hit its stop-loss.",
-        "━━━━━━━━━━━━━━━",
-        f"📍 Entry: <code>₹{setup.entry:,.2f}</code>",
-        f"🛑 Stop-Loss: <code>₹{setup.stopLoss:,.2f}</code>",
-        f"💰 Price now: <b>₹{snapshot.currentPrice:,.2f}</b>",
-        f"🕒 Triggered at: {triggered_at_ist}",
-        f"🕒 Stop-loss hit at: <b>{sl_hit_at_ist}</b>",
-        "❌ <b>Trade failed.</b>",
+        # ── Header (emojis allowed here) ──────────────────────────────────
+        f"🛑 <b>STOP-LOSS HIT — {snapshot.symbol}</b>",
+        f"Strategy  ·  <b>{strategy_label}</b>  |  {setup.action.upper()} trade closed",
+        "",
+        # ── Trade levels (plain-label rows) ──────────────────────────────
+        f"Entry      ·  {action_emoji} <code>₹{setup.entry:,.2f}</code>",
+        f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>",
+        f"Exit       ·  <b>₹{snapshot.currentPrice:,.2f}</b>  <i>({pnl_sign}₹{pnl_abs:,.2f} / {pnl_sign}{pnl_pct:.2f}%)</i>",
+        "",
+        # ── Timeline ──────────────────────────────────────────────────────
+        f"Entered   ·  {triggered_at}",
+        f"SL hit    ·  <b>{sl_hit_at}</b>",
+        "",
+        # ── Result (emoji ok, single line) ───────────────────────────────
+        f"❌ <b>Trade closed at stop-loss. Max loss realised.</b>",
+        "",
+        # ── Footer ────────────────────────────────────────────────────────
+        f"🔗 {_tradingview_link(snapshot.symbol)}",
     ]
-    return title, "\n".join(lines)
+
+    body = "\n".join(lines)
+    return title, body
 
 
-def notify_trade_setup_triggered(snapshot: IntradaySnapshot) -> None:
+def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None = None) -> None:
     """Best-effort notify. Never raises — a notification-service outage must
     not break watchlist polling for the caller."""
     settings = get_settings()
@@ -78,11 +162,16 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot) -> None:
         return
 
     setup = snapshot.tradeSetup
-    if setup.triggeredAt is None or setup.action not in ("buy", "sell"):
+    if setup is None or setup.triggeredAt is None or setup.action not in ("buy", "sell"):
         return
 
+    enabled_strategies = get_user_enabled_strategies(user_id)
+    if setup.strategy not in enabled_strategies:
+        return
+
+    date_str = (setup.triggeredAt.astimezone(_IST) if setup.triggeredAt else datetime.now(_IST)).date().isoformat()
     cache = get_cache_client()
-    cache_key = _trigger_cache_key(snapshot.symbol, setup.action)
+    cache_key = _trigger_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str)
     if cache.exists(cache_key):
         return
 
@@ -92,8 +181,13 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot) -> None:
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
         "title": title,
         "data": message,
-        "reference": f"trigger-{snapshot.symbol}-{setup.triggeredAt.date().isoformat()}",
-        "metadata": {"source": "pivotiq-backend", "symbol": snapshot.symbol, "action": setup.action},
+        "reference": f"trigger-{snapshot.symbol}-{setup.strategy}-{date_str}",
+        "metadata": {
+            "source": "pivotiq-backend",
+            "symbol": snapshot.symbol,
+            "action": setup.action,
+            "strategy": setup.strategy,
+        },
     }
 
     try:
@@ -117,6 +211,7 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot) -> None:
         cache_key,
         {
             "symbol": snapshot.symbol.upper(),
+            "strategy": setup.strategy,
             "action": setup.action,
             "status": "triggered",
             "entry": setup.entry,
@@ -128,13 +223,8 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot) -> None:
     )
 
 
-def _sl_hit_cache_key(symbol: str, action: str) -> str:
-    return f"notif:slhit:{symbol.upper()}:{action}"
-
-
-def notify_stop_loss_hit(snapshot: IntradaySnapshot) -> None:
-    """Best-effort notify when a previously-triggered setup's stop-loss is
-    breached. Never raises — mirrors `notify_trade_setup_triggered`."""
+def notify_stop_loss_hit(snapshot: IntradaySnapshot, user_id: Any | None = None) -> None:
+    """Best-effort notify when a previously-triggered setup's stop-loss is breached."""
     settings = get_settings()
     if not settings.notification_service_enabled:
         return
@@ -143,8 +233,13 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot) -> None:
     if setup is None or setup.slHitAt is None or setup.action not in ("buy", "sell"):
         return
 
+    enabled_strategies = get_user_enabled_strategies(user_id)
+    if setup.strategy not in enabled_strategies:
+        return
+
+    date_str = (setup.slHitAt.astimezone(_IST) if setup.slHitAt else datetime.now(_IST)).date().isoformat()
     cache = get_cache_client()
-    cache_key = _sl_hit_cache_key(snapshot.symbol, setup.action)
+    cache_key = _sl_hit_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str)
     if cache.exists(cache_key):
         return
 
@@ -154,8 +249,14 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot) -> None:
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
         "title": title,
         "data": message,
-        "reference": f"slhit-{snapshot.symbol}-{setup.slHitAt.date().isoformat()}",
-        "metadata": {"source": "pivotiq-backend", "symbol": snapshot.symbol, "action": setup.action, "event": "sl_hit"},
+        "reference": f"slhit-{snapshot.symbol}-{setup.strategy}-{date_str}",
+        "metadata": {
+            "source": "pivotiq-backend",
+            "symbol": snapshot.symbol,
+            "action": setup.action,
+            "strategy": setup.strategy,
+            "event": "sl_hit",
+        },
     }
 
     try:
@@ -178,6 +279,7 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot) -> None:
         cache_key,
         {
             "symbol": snapshot.symbol.upper(),
+            "strategy": setup.strategy,
             "action": setup.action,
             "status": "sl_hit",
             "stopLoss": setup.stopLoss,
@@ -185,4 +287,3 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot) -> None:
         },
         ttl_seconds=_TRIGGER_CACHE_TTL_SECONDS,
     )
-

@@ -15,7 +15,7 @@ from app.schemas.stock import (
     StockSummary,
     SupportLevelsResponse,
 )
-from app.services import intraday_analysis, market_data, support_levels
+from app.services import intraday_analysis, market_data, strategies, support_levels
 from app.services.fyers_client import FyersTokenExpired
 from app.services.market_context import get_active_fyers_token
 from app.services.notification_client import notify_stop_loss_hit, notify_trade_setup_triggered
@@ -93,13 +93,17 @@ async def _require_fyers_token(current_user: dict) -> str:
 
 @router.get("/{symbol}/intraday-snapshot", response_model=IntradaySnapshot)
 async def get_intraday_snapshot(
-    symbol: str, current_user: dict = Depends(get_current_user)
+    symbol: str,
+    strategy: str = Query(default="orb_vwap"),
+    current_user: dict = Depends(get_current_user),
 ) -> IntradaySnapshot:
     if not market_data.symbol_exists(symbol):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found")
+    if not strategies.is_valid_strategy(strategy):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
     token = await _require_fyers_token(current_user)
     try:
-        snapshot = await asyncio.to_thread(intraday_analysis.compute_snapshot, symbol, token)
+        snapshot = await asyncio.to_thread(intraday_analysis.compute_snapshot, symbol, token, strategy)
     except FyersTokenExpired:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Fyers session expired.") from None
     if snapshot is None:
@@ -107,8 +111,8 @@ async def get_intraday_snapshot(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No intraday data yet — is the market open?",
         )
-    asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot))
-    asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot))
+    asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot, current_user["_id"]))
+    asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot, current_user["_id"]))
     return snapshot
 
 
@@ -118,25 +122,29 @@ async def batch_intraday_snapshots(
 ) -> IntradaySnapshotsResponse:
     if not payload.symbols:
         return IntradaySnapshotsResponse(snapshots={}, fetchedAt=datetime.now(timezone.utc))
+    if not strategies.is_valid_strategy(payload.strategy):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
     token = await _require_fyers_token(current_user)
 
     # Each snapshot makes 2 Fyers calls (5m + 3m). Fyers rate-limits at ~10 req/s,
-    # so cap to 4 concurrent snapshots = at most 8 in-flight calls.
-    sem = asyncio.Semaphore(4)
+    # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
+    sem = asyncio.Semaphore(2)
 
     async def _one(sym: str) -> tuple[str, IntradaySnapshot | None]:
         async with sem:
             try:
-                snap = await asyncio.to_thread(intraday_analysis.compute_snapshot, sym, token)
+                await asyncio.sleep(0.06)
+                snap = await asyncio.to_thread(intraday_analysis.compute_snapshot, sym, token, payload.strategy)
             except FyersTokenExpired:
                 snap = None
         return sym.upper(), snap
 
+    user_id = current_user["_id"]
     results = await asyncio.gather(*[_one(s) for s in payload.symbols[:50]])
     for _, snap in results:
         if snap is not None:
-            asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap))
-            asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap))
+            asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id))
+            asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id))
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),

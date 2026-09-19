@@ -241,7 +241,10 @@ class RealProvider:
             return None
 
         if access_token:
-            quote = self._fetch_quote_from_fyers(symbol, access_token)
+            fkey = f"quote-fyers:{symbol}"
+            quote = self._cache.get_or_set(
+                fkey, 10, lambda: self._fetch_quote_from_fyers(symbol, access_token)
+            )
             if quote is not None:
                 return quote
 

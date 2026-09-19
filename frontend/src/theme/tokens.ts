@@ -62,7 +62,7 @@ export const typography = {
 };
 
 export const layout = {
-  contentMaxWidth: 1100,
+  contentMaxWidth: 1240,
   narrowMaxWidth: 720,
   navHeight: 64,
   wideBreakpoint: 900,

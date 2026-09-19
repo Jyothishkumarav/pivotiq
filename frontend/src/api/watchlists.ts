@@ -12,4 +12,6 @@ export const watchlistsApi = {
   reorder: (id: string, symbols: string[]) => apiClient.put<Watchlist>(`/watchlists/${id}/reorder`, { symbols }),
   setSortPreference: (id: string, preference: string) =>
     apiClient.put<Watchlist>(`/watchlists/${id}/sort-preference?preference=${preference}`),
+  setStrategy: (id: string, strategy: string) =>
+    apiClient.put<Watchlist>(`/watchlists/${id}/strategy?strategy=${strategy}`),
 };

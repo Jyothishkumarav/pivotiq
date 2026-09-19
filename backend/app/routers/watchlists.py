@@ -13,7 +13,7 @@ from app.schemas.watchlist import (
     WatchlistRename,
     WatchlistReorder,
 )
-from app.services import market_data, support_levels
+from app.services import market_data, strategies, support_levels
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"], dependencies=[Depends(with_fyers_context)])
 
@@ -60,6 +60,7 @@ def _to_out(doc: dict, sorted_items: list[WatchlistItemOut]) -> WatchlistOut:
         userId=str(doc["userId"]),
         name=doc["name"],
         sortPreference=doc.get("sortPreference", "proximity"),
+        strategy=doc.get("strategy", "orb_vwap"),
         createdAt=doc["createdAt"],
         updatedAt=doc["updatedAt"],
         items=sorted_items,
@@ -98,6 +99,7 @@ async def create_watchlist(payload: WatchlistCreate, current_user: dict = Depend
         "userId": current_user["_id"],
         "name": payload.name,
         "sortPreference": "proximity",
+        "strategy": "orb_vwap",
         "items": [],
         "createdAt": now,
         "updatedAt": now,
@@ -191,3 +193,20 @@ async def set_sort_preference(watchlist_id: str, preference: str, current_user: 
     doc["sortPreference"] = preference
     enriched = [_enrich_item(i) for i in doc.get("items", [])]
     return _to_out(doc, _sort_items(enriched, preference))
+
+
+@router.put("/{watchlist_id}/strategy", response_model=WatchlistOut)
+async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+    """Selects which pluggable intraday trade-setup strategy this watchlist's
+    symbols run against. Defaults to `"orb_vwap"` (the original behavior) and
+    only changes anything for a watchlist that's explicitly switched."""
+    if not strategies.is_valid_strategy(strategy):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
+
+    db = get_db()
+    doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
+    now = datetime.now(timezone.utc)
+    await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"strategy": strategy, "updatedAt": now}})
+    doc["strategy"] = strategy
+    enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "proximity")))

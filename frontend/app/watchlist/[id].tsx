@@ -1,11 +1,13 @@
 import React, { useState } from "react";
-import { Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, LoadingBlock, Screen, Text } from "@/components/ui";
 import { StockRow } from "@/components/StockRow";
+import { StrategyAlertsModal } from "@/components/StrategyAlertsModal";
 import { watchlistsApi } from "@/api/watchlists";
 import { stocksApi } from "@/api/stocks";
+import { settingsApi } from "@/api/settings";
 import { colors, layout, spacing } from "@/theme/tokens";
 import { WatchlistItem } from "@/types";
 
@@ -32,16 +34,17 @@ const COLUMN_HEADERS: {
   align: "flex-start" | "flex-end";
   sortable?: boolean;
 }[] = [
-  { key: "symbol", label: "Symbol", flex: 2.0, align: "flex-start", sortable: true },
-  { key: "ltp", label: "LTP", flex: 0.85, align: "flex-end", sortable: true },
-  { key: "dayChange", label: "Day", flex: 0.75, align: "flex-end", sortable: true },
-  { key: "symbol", label: "Setup", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Entry / SL", flex: 1.2, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Status", flex: 0.85, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ Entry", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ SL", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Time", flex: 0.85, align: "flex-end", sortable: false },
-  { key: "support", label: "Support", flex: 1.05, align: "flex-end", sortable: true },
+  { key: "symbol", label: "Symbol", flex: 1.4, align: "flex-start", sortable: true },
+  { key: "ltp", label: "LTP", flex: 0.75, align: "flex-end", sortable: true },
+  { key: "dayChange", label: "Day", flex: 0.7, align: "flex-end", sortable: true },
+  { key: "symbol", label: "Setup", flex: 0.65, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Entry", flex: 0.85, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Stop Loss", flex: 1.45, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Status", flex: 0.65, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Δ Entry", flex: 0.7, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Δ SL", flex: 0.7, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Time", flex: 0.6, align: "flex-end", sortable: false },
+  { key: "support", label: "Support", flex: 0.85, align: "flex-end", sortable: true },
 ];
 
 /** Column value extractors. `null` values are always pushed to the end regardless of direction. */
@@ -70,6 +73,150 @@ const INTRADAY_LEGEND: { glyph: string; color: string; label: string }[] = [
   { glyph: "◆", color: "#9AA9C7", label: "Inside ORB (range)" },
   { glyph: "▼", color: "#FF6B85", label: "Below ORB (bearish)" },
 ];
+
+const STRATEGY_OPTIONS: { value: string; label: string; icon: string; shortLabel: string }[] = [
+  { value: "orb_vwap",            label: "ORB + VWAP",           icon: "⚡", shortLabel: "ORB + VWAP" },
+  { value: "context_gated",       label: "Context-gated",         icon: "🛡️", shortLabel: "Context" },
+  { value: "orb_pullback",        label: "ORB + VWAP Pullback",   icon: "🔄", shortLabel: "Pullback" },
+  { value: "orb_pullback_support",label: "ORB + Pullback Support",icon: "🎯", shortLabel: "Support" },
+];
+
+const STRATEGY_COLORS: Record<string, { accent: string; glow: string; bg: string }> = {
+  orb_vwap:             { accent: colors.accent,   glow: "rgba(91,139,255,0.25)",  bg: "rgba(91,139,255,0.10)" },
+  context_gated:        { accent: "#9AA9C7",        glow: "rgba(154,169,199,0.20)", bg: "rgba(154,169,199,0.08)" },
+  orb_pullback:         { accent: "#F5B54A",        glow: "rgba(245,181,74,0.22)",  bg: "rgba(245,181,74,0.09)" },
+  orb_pullback_support: { accent: colors.positive, glow: "rgba(61,219,159,0.22)",  bg: "rgba(61,219,159,0.09)" },
+};
+
+function StrategyChip({
+  option,
+  active,
+  loading,
+  onPress,
+}: {
+  option: typeof STRATEGY_OPTIONS[number];
+  active: boolean;
+  loading: boolean;
+  onPress: () => void;
+}) {
+  const palette = STRATEGY_COLORS[option.value] ?? {
+    accent: colors.accent,
+    glow: "rgba(91,139,255,0.25)",
+    bg: "rgba(91,139,255,0.10)",
+  };
+
+  const webTransition = Platform.OS === "web"
+    ? ({
+        transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 120ms ease",
+      } as any)
+    : {};
+
+  return (
+    <Pressable
+      onPress={() => !loading && !active && onPress()}
+      disabled={loading || active}
+      style={({ hovered, pressed }: any) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: spacing.md,
+        paddingVertical: 7,
+        borderRadius: 999,
+        borderWidth: 1.5,
+        borderColor: active ? palette.accent : hovered ? colors.border : colors.borderSubtle,
+        backgroundColor: active
+          ? palette.bg
+          : hovered
+          ? colors.surfaceElevated
+          : "transparent",
+        opacity: loading && !active ? 0.55 : 1,
+        ...webTransition,
+        ...(Platform.OS === "web" && active
+          ? { boxShadow: `0 0 0 3px ${palette.glow}, 0 0 14px ${palette.glow}` }
+          : {}),
+        ...(Platform.OS === "web" && !active && hovered
+          ? { transform: [{ scale: 1.03 }] }
+          : {}),
+        ...(Platform.OS === "web" && pressed
+          ? { transform: [{ scale: 0.97 }] }
+          : {}),
+      })}
+    >
+      {/* Strategy icon */}
+      <Text style={{ fontSize: 13, lineHeight: 16 }}>{option.icon}</Text>
+
+      {/* Label */}
+      <Text
+        variant="caption"
+        style={{
+          fontWeight: active ? "700" : "500",
+          color: active ? palette.accent : colors.textSecondary,
+          letterSpacing: 0.1,
+          ...(Platform.OS === "web" ? { transition: "color 160ms ease, font-weight 160ms ease" } as any : {}),
+        }}
+      >
+        {option.label}
+      </Text>
+
+      {/* Active dot indicator */}
+      {active && (
+        <View
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 3,
+            backgroundColor: palette.accent,
+            ...(Platform.OS === "web"
+              ? ({ boxShadow: `0 0 6px ${palette.accent}` } as any)
+              : {}),
+          }}
+        />
+      )}
+    </Pressable>
+  );
+}
+
+function StrategySelector({
+  value,
+  onChange,
+  loading,
+}: {
+  value: string;
+  onChange: (strategy: string) => void;
+  loading: boolean;
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: spacing.sm,
+        alignItems: "center",
+      }}
+    >
+      {loading && (
+        <View
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: colors.accent,
+            ...(Platform.OS === "web" ? ({ animation: "pulse 1s infinite" } as any) : {}),
+          }}
+        />
+      )}
+      {STRATEGY_OPTIONS.map((opt) => (
+        <StrategyChip
+          key={opt.value}
+          option={opt}
+          active={opt.value === value}
+          loading={loading}
+          onPress={() => onChange(opt.value)}
+        />
+      ))}
+    </View>
+  );
+}
 
 function IntradayLegend({ visible }: { visible: boolean }) {
   if (!visible) return null;
@@ -178,6 +325,7 @@ export default function WatchlistDetailScreen() {
   const queryClient = useQueryClient();
   const [addSymbol, setAddSymbol] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [showStrategyAlerts, setShowStrategyAlerts] = useState(false);
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === "web" && width >= layout.wideBreakpoint;
 
@@ -190,9 +338,16 @@ export default function WatchlistDetailScreen() {
 
   const symbols = watchlist?.items.map((i) => i.symbol) ?? [];
   const symbolsKey = symbols.join(",");
+  const strategy = watchlist?.strategy ?? "orb_vwap";
+
+  const { data: strategyNotifs } = useQuery({
+    queryKey: ["strategy-notifications"],
+    queryFn: settingsApi.getStrategyNotifications,
+  });
+  const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", symbolsKey],
-    queryFn: () => stocksApi.intradaySnapshots(symbols),
+    queryKey: ["intraday", symbolsKey, strategy],
+    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy),
     enabled: symbols.length > 0,
     refetchInterval: 60_000,
     retry: false,
@@ -217,6 +372,11 @@ export default function WatchlistDetailScreen() {
 
   const removeMutation = useMutation({
     mutationFn: (symbol: string) => watchlistsApi.removeItem(id, symbol),
+    onSuccess: invalidate,
+  });
+
+  const strategyMutation = useMutation({
+    mutationFn: (next: string) => watchlistsApi.setStrategy(id, next),
     onSuccess: invalidate,
   });
 
@@ -256,8 +416,19 @@ export default function WatchlistDetailScreen() {
             Prices auto-refresh every 60s
             {isFetching && !isLoading ? " · refreshing…" : ""}
           </Text>
+          <StrategySelector
+            value={strategy}
+            onChange={(next) => strategyMutation.mutate(next)}
+            loading={strategyMutation.isPending}
+          />
         </View>
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+          <Button
+            label={`🔔 Alerts (${activeAlertsCount})`}
+            size="sm"
+            variant="secondary"
+            onPress={() => setShowStrategyAlerts(true)}
+          />
           <Button
             label={isFetching ? "Refreshing…" : "Refresh"}
             size="sm"
@@ -342,23 +513,34 @@ export default function WatchlistDetailScreen() {
           <Button label="+ Add your first stock" size="sm" onPress={() => setShowAdd(true)} />
         </Card>
       ) : (
-        <View style={{ gap: spacing.xs }}>
-          <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />
-          <SortableHeader state={sort} onChange={setSort} />
-          {sortItems(watchlist.items, sort).map((item) => (
-            <StockRow
-              key={item.symbol}
-              item={item}
-              intraday={intradayMap[item.symbol] ?? null}
-              onPress={() => {
-                const href = openStock(item.symbol);
-                if (href) router.push(href);
-              }}
-              onRemove={() => removeMutation.mutate(item.symbol)}
-            />
-          ))}
-        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ minWidth: 1140, width: "100%" }}
+        >
+          <View style={{ width: "100%", gap: spacing.xs }}>
+            <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />
+            <SortableHeader state={sort} onChange={setSort} />
+            {sortItems(watchlist.items, sort).map((item) => (
+              <StockRow
+                key={item.symbol}
+                item={item}
+                intraday={intradayMap[item.symbol] ?? null}
+                onPress={() => {
+                  const href = openStock(item.symbol);
+                  if (href) router.push(href);
+                }}
+                onRemove={() => removeMutation.mutate(item.symbol)}
+              />
+            ))}
+          </View>
+        </ScrollView>
       )}
+
+      <StrategyAlertsModal
+        visible={showStrategyAlerts}
+        onClose={() => setShowStrategyAlerts(false)}
+      />
     </Screen>
   );
 }

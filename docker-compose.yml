@@ -38,6 +38,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      notification-service:
+        condition: service_healthy
     environment:
       MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/pivotiq}
       MONGO_DB_NAME: ${MONGO_DB_NAME:-pivotiq}
@@ -57,15 +59,24 @@ services:
       NOTIFICATION_TELEGRAM_CHAT_ID: ${NOTIFICATION_TELEGRAM_CHAT_ID:-}
     ports:
       - "4000:4000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   frontend-web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        EXPO_PUBLIC_API_URL: ${EXPO_PUBLIC_API_URL:-http://localhost:4000}
+        EXPO_PUBLIC_GOOGLE_CLIENT_ID: ${EXPO_PUBLIC_GOOGLE_CLIENT_ID:-}
     container_name: pivotiq-frontend-web
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       EXPO_PUBLIC_API_URL: ${EXPO_PUBLIC_API_URL:-http://localhost:4000}
       EXPO_PUBLIC_GOOGLE_CLIENT_ID: ${EXPO_PUBLIC_GOOGLE_CLIENT_ID:-}
@@ -87,6 +98,11 @@ services:
       SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
     ports:
       - "4500:4500"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4500/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   mongo_data:

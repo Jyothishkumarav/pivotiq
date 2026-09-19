@@ -167,7 +167,8 @@ export interface CandlesResponse {
 export type IntradayTrend = "up" | "down" | "flat";
 
 export interface TradeSetup {
-  action: "buy" | "sell" | "wait";
+  action: "buy" | "sell";
+  status: "waiting" | "pending_entry" | "triggered" | "sl_hit";
   bias: "bullish" | "bearish" | "neutral";
   entry: number;
   stopLoss: number;
@@ -177,6 +178,12 @@ export interface TradeSetup {
   rationale: string;
   triggeredAt: string | null;
   slHitAt: string | null;
+  strategy: string;
+  conviction: string | null;
+  gapClass: string | null;
+  confirmation: string | null;
+  slWide: number | null;
+  triggerPrice: number | null;
 }
 
 export interface IntradaySnapshot {
@@ -218,6 +225,7 @@ export interface Watchlist {
   userId: string;
   name: string;
   sortPreference: "proximity" | "alphabetical" | "dayChange" | "custom";
+  strategy: string;
   createdAt: string;
   updatedAt: string;
   items: WatchlistItem[];

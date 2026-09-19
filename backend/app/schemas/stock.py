@@ -79,7 +79,8 @@ class CandlesResponse(BaseModel):
 
 
 class TradeSetup(BaseModel):
-    action: Literal["buy", "sell", "wait"]
+    action: Literal["buy", "sell"]
+    status: Literal["waiting", "pending_entry", "triggered", "sl_hit"] = "waiting"
     bias: Literal["bullish", "bearish", "neutral"]
     entry: float
     stopLoss: float
@@ -89,6 +90,12 @@ class TradeSetup(BaseModel):
     rationale: str
     triggeredAt: datetime | None = None
     slHitAt: datetime | None = None
+    strategy: str = "orb_vwap"
+    conviction: str | None = None
+    gapClass: str | None = None
+    confirmation: str | None = None
+    slWide: float | None = None
+    triggerPrice: float | None = None
 
 
 class IntradaySnapshot(BaseModel):
@@ -111,6 +118,7 @@ class IntradaySnapshot(BaseModel):
 
 class IntradaySnapshotsRequest(BaseModel):
     symbols: list[str]
+    strategy: str = "orb_vwap"
 
 
 class IntradaySnapshotsResponse(BaseModel):

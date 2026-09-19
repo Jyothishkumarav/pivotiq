@@ -7,6 +7,7 @@ import { SupportLevelCard } from "@/components/SupportLevelCard";
 import { StockDetailsSections } from "@/components/StockDetailsSections";
 import { CandleChart, buildOverlays, OVERLAY_METHOD_LABELS, OverlayMethod, Overlay } from "@/components/CandleChart";
 import { TradePanel } from "@/components/TradePanel";
+import { fyersApi } from "@/api/fyers";
 import { stocksApi } from "@/api/stocks";
 import { watchlistsApi } from "@/api/watchlists";
 import { colors, layout, spacing } from "@/theme/tokens";
@@ -51,13 +52,21 @@ const INTRADAY_TREND_META = {
   flat: { color: "#9AA9C7", label: "Range-bound", desc: "Price still inside the opening range." },
 } as const;
 
-function IntradayPanel({ snapshot }: { snapshot: IntradaySnapshot | null }) {
+function IntradayPanel({
+  snapshot,
+  fyersConnected,
+}: {
+  snapshot: IntradaySnapshot | null;
+  fyersConnected?: boolean;
+}) {
   if (!snapshot) {
     return (
       <Card style={{ gap: spacing.xs }}>
         <Text variant="subtitle">Intraday trend</Text>
         <Text variant="caption" tone="muted">
-          Connect Fyers to see the first-15-min opening range, VWAP, and today's trend bias.
+          {fyersConnected
+            ? "Market closed (09:15–15:30 IST) · No intraday session data available for today yet."
+            : "Connect Fyers to see the first-15-min opening range, VWAP, and today's trend bias."}
         </Text>
       </Card>
     );
@@ -141,7 +150,6 @@ function IntradayPanel({ snapshot }: { snapshot: IntradaySnapshot | null }) {
 const SETUP_META = {
   buy: { color: "#3DDB9F", label: "BUY", icon: "▲" },
   sell: { color: "#FF6B85", label: "SELL", icon: "▼" },
-  wait: { color: "#F5B54A", label: "WAIT", icon: "◆" },
 } as const;
 
 function TradeSetupCard({ setup, currentPrice }: { setup: TradeSetup; currentPrice: number }) {
@@ -385,6 +393,12 @@ export default function StockDetailScreen() {
     refetchInterval: 60_000,
     retry: false,
   });
+  const { data: fyersStatus } = useQuery({
+    queryKey: ["fyers", "status"],
+    queryFn: fyersApi.status,
+    refetchInterval: 60_000,
+  });
+  const isFyersConnected = fyersStatus?.connected ?? false;
   const { data: watchlists } = useQuery({ queryKey: ["watchlists"], queryFn: watchlistsApi.list });
 
   const addToWatchlistMutation = useMutation({
@@ -470,7 +484,7 @@ export default function StockDetailScreen() {
         </Text>
       </Card>
 
-      <IntradayPanel snapshot={intraday ?? null} />
+      <IntradayPanel snapshot={intraday ?? null} fyersConnected={isFyersConnected} />
 
       {intraday?.tradeSetup ? (
         <TradeSetupCard setup={intraday.tradeSetup} currentPrice={quote.ltp} />

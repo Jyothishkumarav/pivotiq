@@ -21,7 +21,6 @@ const TREND_META = {
 const SETUP_PILL_META = {
   buy: { color: "#3DDB9F", label: "BUY" },
   sell: { color: "#FF6B85", label: "SELL" },
-  wait: { color: "#F5B54A", label: "WAIT" },
 } as const;
 
 function TrendDot({ trend }: { trend: IntradaySnapshot["trend"] }) {
@@ -45,8 +44,14 @@ function TrendDot({ trend }: { trend: IntradaySnapshot["trend"] }) {
 }
 
 function SetupPill({ setup }: { setup: TradeSetup }) {
-  const slHit = !!setup.slHitAt;
-  const meta = slHit ? { color: "#FF6B85", label: "SL HIT" } : SETUP_PILL_META[setup.action];
+  // The Setup pill is always the direction (buy/sell) or wait — never "SL HIT".
+  // Whether the trade already got stopped out lives in the separate Status column.
+  const meta =
+    setup.status === "waiting"
+      ? { color: "#F5B54A", label: "WAIT" }
+      : setup.status === "pending_entry"
+        ? { color: "#F5B54A", label: `${setup.action.toUpperCase()} (PULLBACK)` }
+        : SETUP_PILL_META[setup.action];
   return (
     <View
       style={{
@@ -124,7 +129,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           }}
         >
           {/* Symbol column */}
-          <View style={{ flex: isDesktop ? 2.0 : 1.4, gap: 2 }}>
+          <View style={{ flex: isDesktop ? 1.4 : 1.2, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle">{item.symbol}</Text>
@@ -137,12 +142,12 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* LTP column */}
-          <View style={{ flex: 0.85, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
             <Text variant="mono">{item.ltp !== null ? formatCurrency(item.ltp) : "—"}</Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
             {item.changePercent !== null ? (
               <Text variant="mono" tone={isUp ? "positive" : "negative"}>
                 {formatPercent(item.changePercent)}
@@ -170,7 +175,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Setup column: pill only */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.65, alignItems: "flex-end" }}>
             {intraday?.tradeSetup ? (
               <SetupPill setup={intraday.tradeSetup} />
             ) : (
@@ -180,20 +185,103 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
             )}
           </View>
 
-          {/* Entry / SL column: stacked prices, right-aligned */}
-          <View style={{ flex: 1.2, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && intraday.tradeSetup.action !== "wait" ? (
+          {/* Entry column */}
+          <View style={{ flex: 0.85, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
+              (() => {
+                const setup = intraday.tradeSetup;
+                const hasTrigger = setup.triggerPrice !== null;
+                const entryPrice = hasTrigger ? setup.triggerPrice! : setup.entry;
+                const breakoutPrice = hasTrigger && setup.triggerPrice !== setup.entry ? setup.entry : null;
+                return (
+                  <>
+                    <Text variant="mono" tone="positive" style={{ fontSize: 12, lineHeight: 15 }}>
+                      {formatCurrency(entryPrice)}
+                    </Text>
+                    {breakoutPrice !== null ? (
+                      <Text variant="caption" tone="muted" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
+                        BO {formatCurrency(breakoutPrice)}
+                      </Text>
+                    ) : (
+                      <Text variant="caption" tone="muted" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
+                        Filled
+                      </Text>
+                    )}
+                  </>
+                );
+              })()
+            ) : intraday?.tradeSetup?.status === "pending_entry" ? (
               <>
-                <Text variant="mono" tone="positive">
-                  E {formatCurrency(intraday.tradeSetup.entry)}
+                <Text variant="caption" tone="warning" numberOfLines={1}>
+                  Watch PB
                 </Text>
-                <Text variant="mono" tone="negative">
-                  SL {formatCurrency(intraday.tradeSetup.stopLoss)}
-                </Text>
+                {intraday.tradeSetup.triggerPrice !== null ? (
+                  <Text variant="mono" tone="muted" style={{ fontSize: 11, lineHeight: 13 }} numberOfLines={1}>
+                    {formatCurrency(intraday.tradeSetup.triggerPrice)}
+                  </Text>
+                ) : null}
               </>
             ) : intraday ? (
               <Text variant="caption" tone="muted" numberOfLines={1}>
-                Range {formatCurrency(intraday.openingRangeLow)}–{formatCurrency(intraday.openingRangeHigh)}
+                {formatCurrency(intraday.openingRangeHigh)}
+              </Text>
+            ) : (
+              <Text variant="mono" tone="muted">
+                —
+              </Text>
+            )}
+          </View>
+
+          {/* Stop Loss column: tight stop + risk delta, macro stop below */}
+          <View style={{ flex: 1.45, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
+              (() => {
+                const setup = intraday.tradeSetup;
+                const hasTrigger = setup.triggerPrice !== null;
+                const entryPrice = hasTrigger ? setup.triggerPrice! : setup.entry;
+                const tightDelta = Math.abs(entryPrice - setup.stopLoss);
+                const hasWideSl = setup.slWide != null;
+                const wideDelta = hasWideSl ? Math.abs(entryPrice - setup.slWide!) : null;
+
+                return (
+                  <>
+                    {/* Line 1: Tight stop + risk Δ */}
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", gap: 5 }}>
+                      <Text variant="mono" tone="negative" style={{ fontSize: 11, lineHeight: 14 }} numberOfLines={1}>
+                        SL {formatCurrency(setup.stopLoss)}
+                      </Text>
+                      <Text
+                        style={{ fontSize: 10, lineHeight: 12, fontWeight: "600", color: "#F5B54A" }}
+                        numberOfLines={1}
+                      >
+                        Δ{formatCurrency(tightDelta)}
+                      </Text>
+                    </View>
+
+                    {/* Line 2: Macro stop + macro risk Δ */}
+                    {hasWideSl ? (
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", gap: 5, opacity: 0.85 }}>
+                        <Text variant="mono" tone="negative" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
+                          MSL {formatCurrency(setup.slWide!)}
+                        </Text>
+                        <Text
+                          style={{ fontSize: 10, lineHeight: 12, fontWeight: "600", color: "#F5B54A" }}
+                          numberOfLines={1}
+                        >
+                          MΔ{formatCurrency(wideDelta!)}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text variant="caption" tone="muted" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
+                        Tight stop
+                      </Text>
+                    )}
+                  </>
+                );
+              })()
+            ) : intraday ? (
+              <Text variant="caption" tone="muted" numberOfLines={1}>
+                {formatCurrency(intraday.openingRangeLow)}
               </Text>
             ) : (
               <Text variant="mono" tone="muted">
@@ -203,13 +291,27 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 0.85, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.65, alignItems: "flex-end", paddingLeft: spacing.sm }}>
             {intraday?.tradeSetup ? (
               (() => {
-                if (intraday.tradeSetup.slHitAt) {
+                if (intraday.tradeSetup.status === "sl_hit") {
                   return (
-                    <Text variant="caption" tone="negative">
+                    <Text variant="caption" tone="negative" numberOfLines={1}>
                       SL hit
+                    </Text>
+                  );
+                }
+                if (intraday.tradeSetup.status === "waiting") {
+                  return (
+                    <Text variant="caption" tone="muted" numberOfLines={1}>
+                      wait
+                    </Text>
+                  );
+                }
+                if (intraday.tradeSetup.status === "pending_entry") {
+                  return (
+                    <Text variant="caption" tone="warning" numberOfLines={1}>
+                      pullback wait
                     </Text>
                   );
                 }
@@ -219,26 +321,25 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                   ? (diff / intraday.tradeSetup.entry) * 100
                   : 0;
                 const near = Math.abs(pct) < 0.05;
-                const triggered =
+                // Once triggered, this is purely "is price now favorable vs.
+                // entry" — NOT the setup's own lifecycle status (already
+                // handled above), so avoid words like "waiting"/"triggered"
+                // here that would collide with that unrelated meaning.
+                const inFavor =
                   (intraday.tradeSetup.action === "buy" && diff > 0) ||
                   (intraday.tradeSetup.action === "sell" && diff < 0);
-                const wait = intraday.tradeSetup.action === "wait";
-                const tone: "positive" | "negative" | "warning" | "muted" = wait
-                  ? "muted"
-                  : near
-                    ? "warning"
-                    : triggered
-                      ? "positive"
-                      : "muted";
-                const label = wait
-                  ? "wait"
-                  : near
-                    ? "at entry"
-                    : triggered
-                      ? "triggered"
-                      : "waiting";
+                const tone: "positive" | "negative" | "warning" | "muted" = near
+                  ? "warning"
+                  : inFavor
+                    ? "positive"
+                    : "muted";
+                const label = near
+                  ? "at entry"
+                  : inFavor
+                    ? "in profit"
+                    : "against";
                 return (
-                  <Text variant="caption" tone={tone}>
+                  <Text variant="caption" tone={tone} numberOfLines={1}>
                     {label}
                   </Text>
                 );
@@ -251,8 +352,8 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Δ Entry column: signed ₹ + % — positive means trade is going in your favor */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && intraday.tradeSetup.action !== "wait" && item.ltp !== null ? (
+          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && item.ltp !== null ? (
               (() => {
                 const rawDiff = item.ltp - intraday.tradeSetup.entry;
                 const signedDiff = intraday.tradeSetup.action === "sell" ? -rawDiff : rawDiff;
@@ -281,15 +382,15 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Δ SL column: room to stop loss (positive = safe, negative = past stop) */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && intraday.tradeSetup.action !== "wait" && item.ltp !== null ? (
+          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && item.ltp !== null ? (
               (() => {
                 const rawGap = item.ltp - intraday.tradeSetup.stopLoss;
                 const roomToSl = intraday.tradeSetup.action === "sell" ? -rawGap : rawGap;
                 const pct = intraday.tradeSetup.stopLoss > 0
                   ? (roomToSl / intraday.tradeSetup.stopLoss) * 100
                   : 0;
-                const tone: "positive" | "negative" | "muted" =
+                const tone: "positive" | "negative" | "warning" =
                   pct > 0.05 ? "positive" : pct < -0.05 ? "negative" : "warning";
                 const sign = roomToSl > 0 ? "+" : roomToSl < 0 ? "−" : "";
                 return (
@@ -311,7 +412,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Time column: when the entry level was actually crossed */}
-          <View style={{ flex: 0.85, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.6, alignItems: "flex-end" }}>
             {intraday?.tradeSetup?.triggeredAt ? (
               <Text variant="caption" tone="positive">
                 {formatIstTime(intraday.tradeSetup.triggeredAt)}
@@ -324,7 +425,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Support column */}
-          <View style={{ flex: 1.05, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.85, alignItems: "flex-end" }}>
             {item.belowAllSupports ? (
               <View style={{ alignSelf: "flex-end" }}>
                 <Badge label="Below supports" tone="warning" />
