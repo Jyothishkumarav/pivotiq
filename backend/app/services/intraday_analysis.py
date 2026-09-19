@@ -231,13 +231,21 @@ class _TriggerStateCache:
         # applies on the initial insert, so a concurrent freeze can't overwrite
         # an already-persisted trigger with a later timestamp.
         try:
-            insert_fields = {"triggeredAt": triggered_at, "action": action, "strategy": strategy, **(extra or {})}
+            insert_fields = {
+                "symbol": symbol,
+                "date": today,
+                "strategy": strategy,
+                "triggeredAt": triggered_at,
+                "action": action,
+                **(extra or {}),
+            }
+            query = {"symbol": symbol, "date": today, "strategy": strategy}
             _trigger_collection().update_one(
-                _strategy_filter(symbol, today, strategy),
+                query,
                 {"$setOnInsert": insert_fields},
                 upsert=True,
             )
-            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy))
+            doc = _trigger_collection().find_one(query)
         except Exception:
             logger.exception("failed to persist trigger state for %s — freezing in-memory only", symbol)
             doc = None
@@ -264,9 +272,9 @@ class _TriggerStateCache:
         Uses a conditional update (`slHitAt` must not already exist) so
         concurrent pollers can't stomp on an already-recorded hit."""
         try:
-            query = {**_strategy_filter(symbol, today, strategy), "slHitAt": {"$exists": False}}
+            query = {"symbol": symbol, "date": today, "strategy": strategy, "slHitAt": {"$exists": False}}
             _trigger_collection().update_one(query, {"$set": {"slHitAt": sl_hit_at}})
-            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy))
+            doc = _trigger_collection().find_one({"symbol": symbol, "date": today, "strategy": strategy})
         except Exception:
             logger.exception("failed to persist SL-hit state for %s", symbol)
             return None
@@ -282,16 +290,7 @@ _trigger_state = _TriggerStateCache()
 
 
 def _strategy_filter(symbol: str, today: str, strategy: str) -> dict[str, Any]:
-    """Backward-compat query: trigger docs persisted before the `strategy`
-    field existed are implicitly `orb_vwap` — match those too so nothing that
-    already triggered today silently "forgets" its state after this change.
-    Any other strategy requires an exact field match (no legacy docs exist)."""
-    base: dict[str, Any] = {"symbol": symbol, "date": today}
-    if strategy == "orb_vwap":
-        base["$or"] = [{"strategy": "orb_vwap"}, {"strategy": {"$exists": False}}]
-    else:
-        base["strategy"] = strategy
-    return base
+    return {"symbol": symbol, "date": today, "strategy": strategy}
 
 
 def get_trigger_collection():
