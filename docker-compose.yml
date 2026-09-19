@@ -57,6 +57,8 @@ services:
       NOTIFICATION_SERVICE_ENABLED: ${NOTIFICATION_SERVICE_ENABLED:-false}
       NOTIFICATION_CHANNELS: ${NOTIFICATION_CHANNELS:-["telegram"]}
       NOTIFICATION_TELEGRAM_CHAT_ID: ${NOTIFICATION_TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./backend/app:/app/app
     ports:
       - "4000:4000"
     healthcheck:
