@@ -94,7 +94,7 @@ export const apiClient = {
   post: <T>(path: string, body?: unknown, opts: Partial<RequestOptions> = {}) =>
     request<T>(path, { method: "POST", body, ...opts }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  delete: <T>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body }),
 };
 
 export { API_URL };

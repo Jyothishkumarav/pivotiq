@@ -23,4 +23,10 @@ export const stocksApi = {
     apiClient.get<IntradaySnapshot>(`/stocks/${symbol}/intraday-snapshot`, { strategy, entry_mode: entryMode }),
   intradaySnapshots: (symbols: string[], strategy = "orb_vwap", entryMode: "touch" | "close" = "close") =>
     apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", { symbols, strategy, entryMode }),
+  clearFrozenTriggers: (strategy: string, symbols?: string[], date?: string) =>
+    apiClient.delete<{ deleted: number; message: string }>("/stocks/intraday-triggers", {
+      strategy,
+      ...(symbols ? { symbols } : {}),
+      ...(date ? { date } : {}),
+    }),
 };

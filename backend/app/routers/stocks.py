@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from app.dependencies import get_current_user, with_fyers_context
 from app.schemas.stock import (
@@ -152,4 +153,51 @@ async def batch_intraday_snapshots(
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),
+    )
+
+
+class ClearTriggersRequest(BaseModel):
+    strategy: str
+    date: str | None = None      # ISO date, e.g. "2026-09-18". None = all dates.
+    symbols: list[str] | None = None  # None = all symbols for this strategy/date
+
+
+class ClearTriggersResponse(BaseModel):
+    deleted: int
+    message: str
+
+
+@router.delete("/intraday-triggers", response_model=ClearTriggersResponse)
+async def clear_intraday_triggers(
+    payload: ClearTriggersRequest,
+    current_user: dict = Depends(get_current_user),
+) -> ClearTriggersResponse:
+    """Delete frozen trigger records from MongoDB and evict them from the
+    in-memory cache so the very next snapshot call re-evaluates from raw candles.
+
+    Use this after changing strategy logic to force revalidation without
+    waiting for the next trading day.
+    """
+    if not strategies.is_valid_strategy(payload.strategy):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
+
+    deleted = await asyncio.to_thread(
+        intraday_analysis.clear_frozen_triggers,
+        strategy=payload.strategy,
+        date=payload.date,
+        symbols=payload.symbols,
+    )
+
+    # Also wipe the per-symbol snapshot cache so the refreshed data
+    # is fetched fresh on the very next poll.
+    intraday_analysis.invalidate_snapshot_cache(
+        strategy=payload.strategy,
+        symbols=payload.symbols,
+    )
+
+    symbol_desc = f"{len(payload.symbols)} symbol(s)" if payload.symbols else "all symbols"
+    date_desc = payload.date or "all dates"
+    return ClearTriggersResponse(
+        deleted=deleted,
+        message=f"Cleared {deleted} frozen trigger(s) for {payload.strategy} / {date_desc} / {symbol_desc}.",
     )

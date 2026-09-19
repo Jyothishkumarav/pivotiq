@@ -160,6 +160,29 @@ class _SnapshotCache:
 _cache = _SnapshotCache()
 
 
+def invalidate_snapshot_cache(
+    *,
+    strategy: str,
+    symbols: list[str] | None = None,
+) -> int:
+    """Evict entries from the in-memory snapshot cache.
+
+    Matches keys of the form ``{SYMBOL}:{strategy}:{entry_mode}``.
+    Returns the number of cache entries evicted.
+    """
+    evicted = 0
+    with _cache._lock:
+        keys_to_drop = [
+            k for k in list(_cache._store.keys())
+            if f":{strategy}:" in k
+            and (symbols is None or any(k.startswith(s.upper() + ":") for s in symbols))
+        ]
+        for k in keys_to_drop:
+            del _cache._store[k]
+            evicted += 1
+    return evicted
+
+
 class _TriggerStateCache:
     """Freezes the first trigger detected for a symbol each trading day.
 
@@ -312,6 +335,51 @@ def get_trigger_collection():
     trigger/SL-hit state through the same Mongo collection."""
     return _trigger_collection()
 
+
+def clear_frozen_triggers(
+    *,
+    strategy: str,
+    date: str | None = None,
+    symbols: list[str] | None = None,
+) -> int:
+    """Delete frozen trigger records from Mongo + wipe matching in-memory cache keys.
+
+    Args:
+        strategy:  e.g. 'orb_pullback_support'
+        date:      ISO date string (YYYY-MM-DD). If None, deletes ALL dates for this strategy.
+        symbols:   List of symbols to clear. If None, clears ALL symbols for this strategy/date.
+
+    Returns the number of Mongo documents deleted.
+    """
+    query: dict[str, Any] = {"strategy": strategy}
+    if date is not None:
+        query["date"] = date
+    if symbols:
+        query["symbol"] = {"$in": [s.upper() for s in symbols]}
+
+    try:
+        result = _trigger_collection().delete_many(query)
+        deleted = result.deleted_count
+    except Exception:
+        logger.exception("clear_frozen_triggers: failed to delete from Mongo")
+        deleted = 0
+
+    # Also evict matching keys from the in-memory cache so the next
+    # compute_snapshot call re-evaluates from raw candles immediately.
+    with _trigger_state._lock:
+        keys_to_drop = [
+            k for k in list(_trigger_state._store.keys())
+            if f":{strategy}:" in k
+            and (symbols is None or any(k.startswith(s.upper() + ":") for s in symbols))
+        ]
+        for k in keys_to_drop:
+            del _trigger_state._store[k]
+
+    logger.info(
+        "clear_frozen_triggers: strategy=%s date=%s symbols=%s → %d DB docs deleted, %d cache keys evicted",
+        strategy, date, symbols, deleted, len(keys_to_drop),
+    )
+    return deleted
 
 
 def _today_ist_date() -> str:

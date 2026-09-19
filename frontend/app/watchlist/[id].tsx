@@ -491,6 +491,18 @@ export default function WatchlistDetailScreen() {
     onSuccess: invalidate,
   });
 
+  const resetTriggersMutation = useMutation({
+    mutationFn: () =>
+      stocksApi.clearFrozenTriggers(
+        strategy,
+        symbols.length > 0 ? symbols : undefined,
+      ),
+    onSuccess: () => {
+      // Re-fetch intraday data immediately after clearing
+      queryClient.invalidateQueries({ queryKey: ["intraday"] });
+    },
+  });
+
   const [sort, setSort] = useState<SortState>({ key: "support", dir: "asc" });
 
   if (isLoading || !watchlist) {
@@ -558,6 +570,15 @@ export default function WatchlistDetailScreen() {
             size="sm"
             onPress={() => setShowAdd((v) => !v)}
           />
+          {strategy !== "orb_vwap" && (
+            <Button
+              label={resetTriggersMutation.isPending ? "Resetting…" : "🔄 Reset Triggers"}
+              size="sm"
+              variant="secondary"
+              loading={resetTriggersMutation.isPending}
+              onPress={() => resetTriggersMutation.mutate()}
+            />
+          )}
         </View>
       </View>
 
