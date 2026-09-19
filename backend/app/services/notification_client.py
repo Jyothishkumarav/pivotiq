@@ -95,7 +95,7 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     ]
 
     if breakout_level is not None:
-        lines.append(f"Breakout   ·  <code>₹{breakout_level:,.2f}</code>")
+        lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
 
     lines.extend([
         f"Target     ·  <code>₹{setup.target:,.2f}</code>  <i>(+₹{tgt_delta:,.2f} / +{tgt_delta_p:.2f}%)</i>",
@@ -123,6 +123,7 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
 
     trade_entry = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    breakout_level = setup.entry if (setup.triggerPrice is not None and setup.triggerPrice != setup.entry) else None
     entry_sl   = abs(trade_entry - setup.stopLoss)
     entry_sl_p = round((entry_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
     pnl        = snapshot.currentPrice - trade_entry
@@ -148,6 +149,12 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         "",
         # ── Trade levels (plain-label rows) ──────────────────────────────
         f"Entry      ·  {action_emoji} <code>₹{trade_entry:,.2f}</code>",
+    ]
+
+    if breakout_level is not None:
+        lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
+
+    lines.extend([
         f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(−₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>",
         f"Exit       ·  <b>₹{snapshot.currentPrice:,.2f}</b>  <i>({pnl_sign}₹{pnl_abs:,.2f} / {pnl_sign}{pnl_pct:.2f}%)</i>",
         "",
@@ -160,7 +167,7 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         "",
         # ── Footer ────────────────────────────────────────────────────────
         f"🔗 {_tradingview_link(snapshot.symbol)}",
-    ]
+    ])
 
     body = "\n".join(lines)
     return title, body

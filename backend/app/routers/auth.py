@@ -87,10 +87,8 @@ async def dev_login(payload: DevLoginRequest) -> TokenPair:
     existing = await db.users.find_one({"email": payload.email})
     if existing is None:
         doc = {
-            "googleId": None,
             "email": payload.email,
             "name": payload.name,
-            "avatarUrl": None,
             "tokenVersion": 0,
             "createdAt": now,
             "lastLoginAt": now,
