@@ -532,10 +532,12 @@ export default function WatchlistDetailScreen() {
             onChange={(next) => strategyMutation.mutate(next)}
             loading={strategyMutation.isPending}
           />
-          <EntryModeToggle
-            value={entryMode}
-            onChange={handleEntryModeChange}
-          />
+          {strategy === "orb_pullback_support" && (
+            <EntryModeToggle
+              value={entryMode}
+              onChange={handleEntryModeChange}
+            />
+          )}
         </View>
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <Button
