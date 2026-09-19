@@ -24,9 +24,12 @@ Design:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.schemas.stock import TradeSetup
+
+logger = logging.getLogger(__name__)
 
 _GAP_BIAS_MIN_CANDLES = 6
 _GAP_BIAS_MIN_MOVE_PCT = 0.5
