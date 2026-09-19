@@ -1,10 +1,24 @@
 import Constants from "expo-constants";
 import { tokenStorage } from "./tokenStorage";
 
-const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
-  "http://localhost:4000";
+const getApiUrl = (): string => {
+  // If running in a web browser, use current origin so all requests
+  // go to the current host (same origin) and are reverse-proxied by Nginx.
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const envUrl = process.env.EXPO_PUBLIC_API_URL;
+    if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+      return envUrl;
+    }
+    return window.location.origin;
+  }
+  return (
+    process.env.EXPO_PUBLIC_API_URL ??
+    (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
+    "http://localhost:4000"
+  );
+};
+
+const API_URL = getApiUrl();
 
 export class ApiError extends Error {
   status: number;
@@ -38,7 +52,8 @@ interface RequestOptions {
 }
 
 function buildUrl(path: string, query?: RequestOptions["query"]): string {
-  const url = new URL(`${API_URL}${path}`);
+  const base = API_URL || (typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://localhost:4000");
+  const url = new URL(path.startsWith("/") ? path : `/${path}`, base);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined) url.searchParams.set(k, String(v));

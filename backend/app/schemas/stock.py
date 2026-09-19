@@ -97,6 +97,7 @@ class TradeSetup(BaseModel):
     slWide: float | None = None
     triggerPrice: float | None = None
     entryMode: Literal["touch", "close"] | None = None
+    includeFirstCandle: bool | None = None
 
 
 class IntradaySnapshot(BaseModel):
@@ -122,6 +123,7 @@ class IntradaySnapshotsRequest(BaseModel):
     symbols: list[str]
     strategy: str = "orb_vwap"
     entryMode: Literal["touch", "close"] = "close"
+    includeFirstCandle: bool = False
     retestDate: str | None = None
 
 

@@ -160,6 +160,29 @@ class _SnapshotCache:
 _cache = _SnapshotCache()
 
 
+class _CandlesCache:
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[float, list[dict[str, float]]]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str, ttl: float) -> list[dict[str, float]] | None:
+        now = time.time()
+        with self._lock:
+            hit = self._store.get(key)
+            if hit is not None and now - hit[0] < ttl:
+                return hit[1]
+        return None
+
+    def set(self, key: str, candles: list[dict[str, float]]) -> None:
+        if not candles:
+            return
+        with self._lock:
+            self._store[key] = (time.time(), candles)
+
+
+_candles_cache = _CandlesCache()
+
+
 def invalidate_snapshot_cache(
     *,
     strategy: str,
@@ -197,8 +220,10 @@ class _TriggerStateCache:
         self._store: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
-    def get(self, symbol: str, today: str, strategy: str = "orb_vwap", entry_mode: str = "close") -> dict[str, Any] | None:
-        key = f"{symbol}:{strategy}:{entry_mode}"
+    def get(
+        self, symbol: str, today: str, strategy: str = "orb_vwap", entry_mode: str = "close", include_first_candle: bool = False,
+    ) -> dict[str, Any] | None:
+        key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}"
         with self._lock:
             state = self._store.get(key)
             if state is not None and state["date"] == today:
@@ -207,7 +232,7 @@ class _TriggerStateCache:
         # Not in this process's memory — check Mongo (survives --reload
         # restarts and is shared across worker processes).
         try:
-            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode))
+            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode, include_first_candle))
         except Exception:
             logger.exception("failed to read persisted trigger state for %s", symbol)
             return None
@@ -234,6 +259,7 @@ class _TriggerStateCache:
             "confirmation": doc.get("confirmation"),
             "trigger_price": doc.get("triggerPrice"),
             "entry_mode": doc.get("entryMode", "close"),
+            "include_first_candle": doc.get("includeFirstCandle", False),
         }
 
     def freeze(
@@ -244,9 +270,10 @@ class _TriggerStateCache:
         action: str,
         strategy: str = "orb_vwap",
         entry_mode: str = "close",
+        include_first_candle: bool = False,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        key = f"{symbol}:{strategy}:{entry_mode}"
+        key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}"
         with self._lock:
             state = self._store.get(key)
             if state is not None and state["date"] == today:
@@ -261,11 +288,18 @@ class _TriggerStateCache:
                 "date": today,
                 "strategy": strategy,
                 "entryMode": entry_mode,
+                "includeFirstCandle": include_first_candle,
                 "triggeredAt": triggered_at,
                 "action": action,
                 **(extra or {}),
             }
-            query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode}
+            query = {
+                "symbol": symbol,
+                "date": today,
+                "strategy": strategy,
+                "entryMode": entry_mode,
+                "includeFirstCandle": include_first_candle,
+            }
             _trigger_collection().update_one(
                 query,
                 {"$setOnInsert": insert_fields},
@@ -286,6 +320,7 @@ class _TriggerStateCache:
                 "confirmation": (extra or {}).get("confirmation"),
                 "trigger_price": (extra or {}).get("triggerPrice"),
                 "entry_mode": entry_mode,
+                "include_first_candle": include_first_candle,
             }
         )
 
@@ -293,18 +328,34 @@ class _TriggerStateCache:
             self._store[key] = state
         return state
 
-    def freeze_sl_hit(self, symbol: str, today: str, sl_hit_at: datetime, strategy: str = "orb_vwap", entry_mode: str = "close") -> dict[str, Any] | None:
+    def freeze_sl_hit(
+        self, symbol: str, today: str, sl_hit_at: datetime, strategy: str = "orb_vwap", entry_mode: str = "close", include_first_candle: bool = False,
+    ) -> dict[str, Any] | None:
         """Locks in the stop-loss-hit timestamp exactly once per symbol/day.
 
         Uses a conditional update (`slHitAt` must not already exist) so
         concurrent pollers can't stomp on an already-recorded hit."""
         try:
-            query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode, "slHitAt": {"$exists": False}}
+            query = {
+                "symbol": symbol,
+                "date": today,
+                "strategy": strategy,
+                "entryMode": entry_mode,
+                "includeFirstCandle": include_first_candle,
+                "slHitAt": {"$exists": False},
+            }
             res = _trigger_collection().update_one(query, {"$set": {"slHitAt": sl_hit_at}})
-            if res.matched_count == 0 and entry_mode == "close":
-                fallback_query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": {"$exists": False}, "slHitAt": {"$exists": False}}
+            if res.matched_count == 0 and not include_first_candle:
+                fallback_query = {
+                    "symbol": symbol,
+                    "date": today,
+                    "strategy": strategy,
+                    "entryMode": entry_mode,
+                    "includeFirstCandle": {"$exists": False},
+                    "slHitAt": {"$exists": False},
+                }
                 _trigger_collection().update_one(fallback_query, {"$set": {"slHitAt": sl_hit_at}})
-            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode))
+            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode, include_first_candle))
         except Exception:
             logger.exception("failed to persist SL-hit state for %s", symbol)
             return None
@@ -312,22 +363,31 @@ class _TriggerStateCache:
             return None
         state = self._state_from_doc(doc)
         with self._lock:
-            self._store[f"{symbol}:{strategy}:{entry_mode}"] = state
+            self._store[f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}"] = state
         return state
 
 
 _trigger_state = _TriggerStateCache()
 
 
-def _strategy_filter(symbol: str, today: str, strategy: str, entry_mode: str = "close") -> dict[str, Any]:
+def _strategy_filter(
+    symbol: str, today: str, strategy: str, entry_mode: str = "close", include_first_candle: bool = False,
+) -> dict[str, Any]:
+    filter_dict: dict[str, Any] = {
+        "symbol": symbol,
+        "date": today,
+        "strategy": strategy,
+    }
     if entry_mode == "close":
-        return {
-            "symbol": symbol,
-            "date": today,
-            "strategy": strategy,
-            "$or": [{"entryMode": "close"}, {"entryMode": {"$exists": False}}],
-        }
-    return {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode}
+        filter_dict["$or"] = [{"entryMode": "close"}, {"entryMode": {"$exists": False}}]
+    else:
+        filter_dict["entryMode"] = entry_mode
+
+    if not include_first_candle:
+        filter_dict["includeFirstCandle"] = {"$in": [False, None]}
+    else:
+        filter_dict["includeFirstCandle"] = True
+    return filter_dict
 
 
 def get_trigger_collection():
@@ -505,6 +565,7 @@ def compute_snapshot(
     strategy: str = "orb_vwap",
     entry_mode: str = "close",
     retest_date: str | None = None,
+    include_first_candle: bool = False,
 ) -> IntradaySnapshot | None:
     """Fetch candles and reduce them to an ORB snapshot.
 
@@ -519,81 +580,89 @@ def compute_snapshot(
     """
     symbol = symbol.upper()
     is_retest = bool(retest_date)
-    cache_key = f"{symbol}:{strategy}:{entry_mode}:{retest_date or 'live'}"
+    cache_key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}:{retest_date or 'live'}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
 
     today = retest_date if is_retest else _latest_trading_date()
+    candles_ttl = 86400.0 if is_retest else 45.0
+    key_5m = f"{symbol}:5m:{today}"
+    key_3m = f"{symbol}:3m:{today}"
 
-    # 5-min candles are used ONLY for defining the ORB high/low from the first 20 min.
-    # 3-min candles power everything after 9:35 (VWAP, current price, trigger detection)
-    # for finer resolution. Both calls are safe under Fyers' ~10 req/s limit.
-    try:
-        resp_5m = fyers_client.get_history(
-            access_token, symbol, resolution="5", date_from=today, date_to=today,
-        )
-    except FyersTokenExpired:
-        raise
-    except FyersError as exc:
-        logger.warning("Intraday 5m fetch failed for %s on %s: %s", symbol, today, exc)
-        return None
-
-    candles_5m = _parse_candles(resp_5m.get("candles") or [])
-
-    # In live mode: if candidate date has no trading bars (holiday during weekday),
-    # step back to the prior business day so users can still see the last active session.
-    # In retest mode: do not step back; return None if the requested historical date has no data.
-    if not candles_5m and not is_retest:
-        prev_d = datetime.fromisoformat(today).date() - timedelta(days=1)
-        while prev_d.weekday() >= 5:
-            prev_d -= timedelta(days=1)
-        prev_str = prev_d.isoformat()
+    candles_5m = _candles_cache.get(key_5m, candles_ttl)
+    if candles_5m is None:
         try:
-            resp_5m_prev = fyers_client.get_history(
-                access_token, symbol, resolution="5", date_from=prev_str, date_to=prev_str,
+            resp_5m = fyers_client.get_history(
+                access_token, symbol, resolution="5", date_from=today, date_to=today,
             )
-            parsed_prev = _parse_candles(resp_5m_prev.get("candles") or [])
-            if parsed_prev:
-                today = prev_str
-                resp_5m = resp_5m_prev
-                candles_5m = parsed_prev
-        except Exception:
-            pass
+        except FyersTokenExpired:
+            raise
+        except FyersError as exc:
+            logger.warning("Intraday 5m fetch failed for %s on %s: %s", symbol, today, exc)
+            return None
 
-    if not candles_5m:
-        return None
+        candles_5m = _parse_candles(resp_5m.get("candles") or [])
 
-    # 3-min is optional — a rate-limit failure here shouldn't kill the whole snapshot.
-    resp_3m: dict | None = None
-    try:
-        resp_3m = fyers_client.get_history(
-            access_token, symbol, resolution="3", date_from=today, date_to=today,
-        )
-    except FyersTokenExpired:
-        raise
-    except FyersError as exc:
-        logger.info("Intraday 3m fetch skipped for %s (falling back to 5m): %s", symbol, exc)
+        # In live mode: if candidate date has no trading bars (holiday during weekday),
+        # step back to the prior business day so users can still see the last active session.
+        # In retest mode: do not step back; return None if the requested historical date has no data.
+        if not candles_5m and not is_retest:
+            prev_d = datetime.fromisoformat(today).date() - timedelta(days=1)
+            while prev_d.weekday() >= 5:
+                prev_d -= timedelta(days=1)
+            prev_str = prev_d.isoformat()
+            try:
+                resp_5m_prev = fyers_client.get_history(
+                    access_token, symbol, resolution="5", date_from=prev_str, date_to=prev_str,
+                )
+                parsed_prev = _parse_candles(resp_5m_prev.get("candles") or [])
+                if parsed_prev:
+                    today = prev_str
+                    candles_5m = parsed_prev
+                    key_5m = f"{symbol}:5m:{today}"
+                    key_3m = f"{symbol}:3m:{today}"
+            except Exception:
+                pass
 
-    candles_3m = _parse_candles((resp_3m or {}).get("candles") or [])
+        if not candles_5m:
+            return None
+        _candles_cache.set(key_5m, candles_5m)
+
+    candles_3m = _candles_cache.get(key_3m, candles_ttl)
+    if candles_3m is None:
+        resp_3m: dict | None = None
+        try:
+            resp_3m = fyers_client.get_history(
+                access_token, symbol, resolution="3", date_from=today, date_to=today,
+            )
+        except FyersTokenExpired:
+            raise
+        except FyersError as exc:
+            logger.info("Intraday 3m fetch skipped for %s (falling back to 5m): %s", symbol, exc)
+
+        candles_3m = _parse_candles((resp_3m or {}).get("candles") or [])
+        if candles_3m:
+            _candles_cache.set(key_3m, candles_3m)
 
     # ORB is derived from the 5-min bars:
-    # For orb_pullback_support: 3 x 5-min candles = first 15 min (9:15-9:30 IST).
-    # For other strategies: 4 x 5-min candles = first 20 min (9:15-9:35 IST).
-    orb_candle_count = 3 if strategy == "orb_pullback_support" else _OPENING_RANGE_CANDLES
-    orb = candles_5m[:orb_candle_count]
+    # 4 x 5-min candles = first 20 min (9:15-9:35 IST) for all strategies.
+    orb = candles_5m[:_OPENING_RANGE_CANDLES]
     if len(orb) == 0:
         return None
-    # For non-default strategies (like orb_pullback_support's 15-min ORB), the opening
-    # range is defined by the absolute high and low across all opening candles (including candle 0).
-    # For legacy orb_vwap only, candle 0 was excluded as opening-auction noise.
-    swing_pool = orb if strategy != "orb_vwap" else (orb[1:] if len(orb) > 1 else orb)
+    # If include_first_candle is True (only applicable to pluggable strategies like orb_pullback_support):
+    # include opening candle in swing pool.
+    # For orb_vwap, always skip the first candle to determine heights.
+    if include_first_candle and strategy != "orb_vwap":
+        swing_pool = orb
+    else:
+        swing_pool = orb[1:] if len(orb) > 1 else orb
     swing_high_candle = max(swing_pool, key=lambda c: c["high"])
     swing_low_candle = min(swing_pool, key=lambda c: c["low"])
     orb_high = swing_high_candle["high"]
     orb_low = swing_low_candle["low"]
     orb_close = orb[-1]["close"]
-    swing_complete = len(orb) >= orb_candle_count
+    swing_complete = len(orb) >= _OPENING_RANGE_CANDLES
     swing_high_at = datetime.fromtimestamp(swing_high_candle["ts"] + 300, tz=timezone.utc)
     swing_low_at = datetime.fromtimestamp(swing_low_candle["ts"] + 300, tz=timezone.utc)
 
@@ -619,12 +688,19 @@ def compute_snapshot(
     else:
         trend = "flat"
 
-    # Before the ORB window closes (9:30 for pullback support, 9:35 for others), ORB high/low are in flux.
+    # Before the ORB window closes at 9:35 IST, ORB high/low are in flux.
     setup_trend = trend if swing_complete else "flat"
 
-    # Scan the finer monitor bars for the first cross beyond the ORB high/low.
-    # For orb_pullback_support, at or after 9:30; for others, at or after 9:35.
-    orb_close_ts = orb[-1]["ts"] + 300  # start of post-ORB window epoch
+    # Strong, well-supported gap-open locks out the opposite direction
+    # for the rest of the day — see `_orb_vwap_gap_bias` docstring.
+    gap_bias = _orb_vwap_gap_bias(symbol, candles_5m)
+    if gap_bias == "buy" and setup_trend == "down":
+        setup_trend = "flat"
+    elif gap_bias == "sell" and setup_trend == "up":
+        setup_trend = "flat"
+
+    # Scan the finer monitor bars for the first cross beyond the ORB high/low at or after 9:35.
+    orb_close_ts = orb[-1]["ts"] + 300  # start of post-ORB window epoch (9:35 IST)
     triggered_at: datetime | None = None
     trigger_bar_secs = _FINE_RESOLUTION_SECS if candles_3m else 300
     entry_cutoff_ts = _entry_cutoff_ts(today)
@@ -651,18 +727,13 @@ def compute_snapshot(
             trigger_bar_secs=trigger_bar_secs,
             entry_cutoff_ts=entry_cutoff_ts,
             entry_mode=entry_mode,
+            include_first_candle=include_first_candle,
             is_retest=is_retest,
+            setup_trend=setup_trend,
+            gap_bias=gap_bias,
         )
     else:
-        # Strong, well-supported gap-open locks out the opposite direction
-        # for the rest of the day — see `_orb_vwap_gap_bias` docstring.
-        gap_bias = _orb_vwap_gap_bias(symbol, candles_5m)
-        if gap_bias == "buy" and setup_trend == "down":
-            setup_trend = "flat"
-        elif gap_bias == "sell" and setup_trend == "up":
-            setup_trend = "flat"
-
-        frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode) if not is_retest else None
+        frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode, include_first_candle=False) if not is_retest else None
         if frozen is not None:
             # Already triggered earlier today — keep the original action + timestamp
             # constant regardless of how the monitor bar set reshuffles on refresh.
@@ -753,11 +824,14 @@ def _compute_pluggable_setup(
     trigger_bar_secs: int,
     entry_cutoff_ts: float,
     entry_mode: str = "close",
+    include_first_candle: bool = False,
     is_retest: bool = False,
+    setup_trend: str = "flat",
+    gap_bias: str | None = None,
 ) -> TradeSetup:
     """Dispatches to a non-default strategy module, wiring its freeze/SL-hit
     state through the same shared `_trigger_state` cache (namespaced by
-    `strategy` and `entry_mode` so it never collides with `orb_vwap`'s state).
+    `strategy`, `entry_mode`, and `include_first_candle` so it never collides).
 
     `entry_cutoff_ts` is forwarded so every strategy blocks FRESH entries
     past 14:45 IST the same way — already-triggered setups still get their
@@ -765,7 +839,7 @@ def _compute_pluggable_setup(
     if strategy == "context_gated":
         from app.services.strategies import context_gated
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle) if not is_retest else None
         setup, freeze_payload = context_gated.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -784,6 +858,7 @@ def _compute_pluggable_setup(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
                 entry_mode=entry_mode,
+                include_first_candle=include_first_candle,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -803,17 +878,18 @@ def _compute_pluggable_setup(
             )
             if sl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
                     if updated is not None:
                         sl_hit_at = updated["sl_hit_at"]
                 setup.slHitAt = sl_hit_at
                 setup.status = "sl_hit"
+        setup.includeFirstCandle = include_first_candle
         return setup
 
     if strategy == "orb_pullback":
         from app.services.strategies import orb_pullback
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle) if not is_retest else None
         setup, freeze_payload = orb_pullback.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -832,6 +908,7 @@ def _compute_pluggable_setup(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
                 entry_mode=entry_mode,
+                include_first_candle=include_first_candle,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -853,17 +930,18 @@ def _compute_pluggable_setup(
             )
             if sl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
                     if updated is not None:
                         sl_hit_at = updated["sl_hit_at"]
                 setup.slHitAt = sl_hit_at
                 setup.status = "sl_hit"
+        setup.includeFirstCandle = include_first_candle
         return setup
 
     if strategy == "orb_pullback_support":
         from app.services.strategies import orb_pullback_support
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle) if not is_retest else None
         setup, freeze_payload = orb_pullback_support.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -877,12 +955,15 @@ def _compute_pluggable_setup(
             entry_cutoff_ts=entry_cutoff_ts,
             entry_mode=entry_mode,
             frozen=frozen,
+            setup_trend=setup_trend,
+            gap_bias=gap_bias,
         )
         if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
                 entry_mode=entry_mode,
+                include_first_candle=include_first_candle,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -905,11 +986,12 @@ def _compute_pluggable_setup(
             )
             if sl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
                     if updated is not None:
                         sl_hit_at = updated["sl_hit_at"]
                 setup.slHitAt = sl_hit_at
                 setup.status = "sl_hit"
+        setup.includeFirstCandle = include_first_candle
         return setup
 
     raise ValueError(f"Unknown strategy: {strategy!r}")

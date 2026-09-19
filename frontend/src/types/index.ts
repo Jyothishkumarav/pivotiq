@@ -185,6 +185,7 @@ export interface TradeSetup {
   slWide: number | null;
   triggerPrice: number | null;
   entryMode?: "touch" | "close" | null;
+  includeFirstCandle?: boolean | null;
 }
 
 export interface IntradaySnapshot {

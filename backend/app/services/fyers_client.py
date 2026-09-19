@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import urllib.parse
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -145,13 +146,21 @@ def get_history(
         params["range_from"] = date_from
     if date_to:
         params["range_to"] = date_to
-    resp = requests.get(
-        f"{_DATA_BASE}/history",
-        headers=_auth_header(access_token),
-        params=params,
-        timeout=20,
-    )
-    return _parse(resp)
+    for attempt in range(3):
+        resp = requests.get(
+            f"{_DATA_BASE}/history",
+            headers=_auth_header(access_token),
+            params=params,
+            timeout=20,
+        )
+        try:
+            return _parse(resp)
+        except FyersError as exc:
+            if "request limit" in str(exc).lower() and attempt < 2:
+                time.sleep(0.35 * (attempt + 1))
+                continue
+            raise
+    return {}
 
 
 def _parse(resp: requests.Response) -> dict[str, Any]:

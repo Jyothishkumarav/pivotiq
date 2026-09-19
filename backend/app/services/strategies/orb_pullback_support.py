@@ -74,52 +74,48 @@ def _gap_bias(candles_5m: list[dict]) -> str | None:
 
 def _find_breakout(
     monitor: list[dict], orb_high: float, orb_low: float, orb_close_ts: float,
-    entry_cutoff_ts: float, gap_bias: str | None,
-) -> tuple[int, str] | None:
-    """First candle whose CLOSE clears the ORB box in an allowed direction."""
-    allow_up = gap_bias != "sell"
-    allow_down = gap_bias != "buy"
+    entry_cutoff_ts: float, direction: str,
+) -> int | None:
+    """First candle after 9:35 IST that closes beyond the ORB level in the allowed direction."""
     for i, c in enumerate(monitor):
         if c["ts"] < orb_close_ts or c["ts"] >= entry_cutoff_ts:
             continue
-        if allow_up and c["close"] > orb_high:
-            return i, "buy"
-        if allow_down and c["close"] < orb_low:
-            return i, "sell"
+        if direction == "buy" and c["close"] > orb_high:
+            return i
+        if direction == "sell" and c["close"] < orb_low:
+            return i
     return None
 
 
 def _find_support_entry(
     monitor: list[dict], breakout_idx: int, direction: str, entry_cutoff_ts: float, entry_mode: str = "close",
-) -> tuple[float, float, int, datetime | None] | None:
+) -> tuple[float, float, int, datetime | None, bool] | None:
     """Scans for the pullback and candidate supporting candles in the breakout direction.
 
     BUY:  Pullback = red candles.  Supporting candle = first GREEN recovery candle.
           Trigger level = GREEN candle HIGH.
           Entry: any candle CLOSES above that HIGH (close mode)
                  or any candle HIGH breaks it (touch mode).
+          In touch mode: if a candle's price moves higher than the previous pullback
+          candle's HIGH (big green candle covering pullback), enter immediately.
 
-    SELL: Pullback = green candles.  Supporting candle = first GREEN pullback candle.
-          Trigger level = GREEN candle LOW.
-          Entry: a RED candle CLOSES below that LOW (close mode)
+    SELL: Pullback = green candles.  Supporting candle = first RED rejection candle.
+          Trigger level = RED candle LOW.
+          Entry: any candle CLOSES below that LOW (close mode)
                  or any candle LOW breaks it (touch mode).
-          If more green candles form, the stop is extended to their highs and the
-          trigger is lowered to their lows (use the tightest / lowest green low seen).
-
-    When entry_mode == 'close':
-      BUY  — any candle close above GREEN high.
-      SELL — only a RED candle close below GREEN low.
-    When entry_mode == 'touch':
-      Triggers as soon as a candle extreme (High for BUY, Low for SELL) breaks the level.
+          In touch mode: if a candle's price moves lower than the previous bounce
+          candle's LOW (big red candle covering bounce), enter immediately.
 
     Returns:
-      (support_trigger_level, tight_stop, support_candle_idx, triggered_at)
+      (support_trigger_level, tight_stop, support_candle_idx, triggered_at, is_pullback_level)
       where triggered_at is datetime if already broken historically, else None (candidate waiting for break).
-      Returns None if no candidate supporting candle has formed yet.
+      Returns None if no candidate or pullback has formed yet.
     """
     pullback_count = 0
     pullback_extreme: float | None = None
     candidate: tuple[float, float, int] | None = None
+    prev_pullback: dict | None = None
+    prev_idx: int | None = None
 
     for i in range(breakout_idx + 1, len(monitor)):
         c = monitor[i]
@@ -131,69 +127,75 @@ def _find_support_entry(
         if direction == "buy":
             if candidate is not None:
                 trig_lvl, t_stop, cand_idx = candidate
-                # Check if this bar triggered entry
                 triggered = c["close"] > trig_lvl if entry_mode == "close" else c["high"] > trig_lvl
                 if triggered:
                     triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
-                    return trig_lvl, t_stop, cand_idx, triggered_at
+                    return trig_lvl, t_stop, cand_idx, triggered_at, False
                 # Did this bar resume the pullback (red candle or lower low)?
                 if c["low"] < t_stop or is_red:
                     candidate = None
                     pullback_count += 1
                     pullback_extreme = min(t_stop, c["low"])
+                    prev_pullback = c
+                    prev_idx = i
                 elif is_green:
-                    # Keep first supporting candle's trigger level; track lowest support low
                     candidate = (trig_lvl, min(t_stop, c["low"]), cand_idx)
             else:
+                # In touch mode: if a candle moves higher than previous pullback candle's high, trigger entry!
+                if entry_mode == "touch" and pullback_count >= 1 and prev_pullback is not None:
+                    if c["high"] > prev_pullback["high"]:
+                        t_stop = min(pullback_extreme, c["low"])
+                        triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
+                        return prev_pullback["high"], t_stop, i, triggered_at, True
+
                 if is_red:
                     pullback_count += 1
                     pullback_extreme = c["low"] if pullback_extreme is None else min(pullback_extreme, c["low"])
+                    prev_pullback = c
+                    prev_idx = i
                 elif is_green and pullback_count >= _MIN_PULLBACK_CANDLES:
                     candidate = (c["high"], min(pullback_extreme, c["low"]), i)
 
-        else:  # sell — supporting candle = first GREEN pullback candle; trigger = its LOW
-            color = "GRN" if is_green else ("RED" if is_red else "DOJ")
-            ts_str = datetime.fromtimestamp(c["ts"], tz=timezone.utc).strftime("%H:%M")
+        else:  # sell
             if candidate is not None:
                 trig_lvl, t_stop, cand_idx = candidate
-                # close mode → RED candle must close below supporting GREEN candle's LOW
-                # touch mode → any candle whose low breaks below trigger level
-                if entry_mode == "close":
-                    triggered = is_red and c["close"] < trig_lvl
-                else:
-                    triggered = c["low"] < trig_lvl
-                logger.debug(
-                    "SELL %s %s O=%.2f H=%.2f L=%.2f C=%.2f | cand_trig=%.2f cand_stop=%.2f "
-                    "is_red=%s triggered=%s (mode=%s)",
-                    ts_str, color, c["open"], c["high"], c["low"], c["close"],
-                    trig_lvl, t_stop, is_red, triggered, entry_mode,
-                )
+                triggered = c["close"] < trig_lvl if entry_mode == "close" else c["low"] < trig_lvl
                 if triggered:
                     triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
-                    logger.debug("SELL TRIGGERED at %s trig_lvl=%.2f close=%.2f", ts_str, trig_lvl, c["close"])
-                    return trig_lvl, t_stop, cand_idx, triggered_at
-                # More GREEN candles: pullback extending higher — widen stop, lower trigger
-                if is_green:
-                    candidate = (min(trig_lvl, c["low"]), max(t_stop, c["high"]), cand_idx)
-                # RED candle that didn't trigger — keep candidate alive
+                    return trig_lvl, t_stop, cand_idx, triggered_at, False
+                # Did this bar resume the bounce/pullback (green candle or higher high)?
+                if c["high"] > t_stop or is_green:
+                    candidate = None
+                    pullback_count += 1
+                    pullback_extreme = max(t_stop, c["high"])
+                    prev_pullback = c
+                    prev_idx = i
+                elif is_red:
+                    candidate = (trig_lvl, max(t_stop, c["high"]), cand_idx)
             else:
+                # In touch mode: if a candle moves lower than previous bounce candle's low, trigger entry!
+                if entry_mode == "touch" and pullback_count >= 1 and prev_pullback is not None:
+                    if c["low"] < prev_pullback["low"]:
+                        t_stop = max(pullback_extreme, c["high"])
+                        triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
+                        return prev_pullback["low"], t_stop, i, triggered_at, True
+
                 if is_green:
-                    # First GREEN candle after SELL breakout = supporting candle
+                    pullback_count += 1
                     pullback_extreme = c["high"] if pullback_extreme is None else max(pullback_extreme, c["high"])
-                    candidate = (c["low"], pullback_extreme, i)
-                    logger.debug(
-                        "SELL SUPPORT %s GRN O=%.2f H=%.2f L=%.2f C=%.2f | trig=%.2f stop=%.2f",
-                        ts_str, c["open"], c["high"], c["low"], c["close"], c["low"], pullback_extreme,
-                    )
-                else:
-                    logger.debug(
-                        "SELL %s %s O=%.2f H=%.2f L=%.2f C=%.2f | no green candidate yet",
-                        ts_str, color, c["open"], c["high"], c["low"], c["close"],
-                    )
+                    prev_pullback = c
+                    prev_idx = i
+                elif is_red and pullback_count >= _MIN_PULLBACK_CANDLES:
+                    candidate = (c["low"], max(pullback_extreme, c["high"]), i)
 
     if candidate is not None:
         trig_lvl, t_stop, cand_idx = candidate
-        return trig_lvl, t_stop, cand_idx, None
+        return trig_lvl, t_stop, cand_idx, None, False
+
+    if prev_pullback is not None and pullback_count >= 1 and prev_idx is not None:
+        lvl = prev_pullback["high"] if direction == "buy" else prev_pullback["low"]
+        t_stop = pullback_extreme if pullback_extreme is not None else (prev_pullback["low"] if direction == "buy" else prev_pullback["high"])
+        return lvl, t_stop, prev_idx, None, True
 
     return None
 
@@ -212,75 +214,84 @@ def compute_setup(
     entry_cutoff_ts: float,
     frozen: dict | None,
     entry_mode: str = "close",
+    setup_trend: str = "flat",
+    gap_bias: str | None = None,
 ) -> tuple[TradeSetup, dict | None]:
-    orb_macro_sl_buy = orb_low
-    orb_macro_sl_sell = orb_high
-    gap_bias = _gap_bias(candles_5m)
+    if gap_bias is None:
+        gap_bias = _gap_bias(candles_5m)
 
     if frozen is not None:
         action = frozen["action"]
         triggered_at = frozen["triggered_at"]
-        entry = frozen["entry"]  # Breakout price
-        stop_loss = frozen["stop_loss"]
-        trigger_price = frozen.get("trigger_price")  # Actual fill price
+        entry = frozen["entry"]  # Breakout price (BO level)
+        stop_loss = frozen["stop_loss"]  # Structural ORB stop loss
+        trigger_price = frozen.get("trigger_price")  # Actual pullback entry price
         sl_wide = frozen.get("sl_wide") or (orb_low if action == "buy" else orb_high)
         status = "triggered"
-        _main_sl_note = f" · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})" if sl_wide else ""
         fill_level = trigger_price if trigger_price is not None else entry
         rationale = (
-            f"Broke ORB at ₹{entry:.2f}, pulled back, and entered at support candle level ₹{fill_level:.2f}.{_main_sl_note}"
-            if trigger_price is not None
-            else f"Support candle entry, tight stop ₹{stop_loss:.2f}."
+            f"Broke ORB at ₹{entry:.2f}, pulled back, and entered at support candle level ₹{fill_level:.2f}. "
+            f"Stop ₹{stop_loss:.2f}."
         )
+    elif setup_trend not in ("up", "down"):
+        action = gap_bias if gap_bias is not None else ("buy" if current_price >= vwap else "sell")
+        entry = orb_high if action == "buy" else orb_low
+        stop_loss = orb_low if action == "buy" else orb_high
+        sl_wide = stop_loss
+        triggered_at, trigger_price = None, None
+        status = "waiting"
+        rationale = f"Price still inside opening range ₹{orb_low:.2f}–₹{orb_high:.2f}. Waiting for a decisive break."
     else:
-        breakout = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, gap_bias)
-        if breakout is None:
-            action = gap_bias if gap_bias is not None else ("buy" if current_price >= vwap else "sell")
-            entry = orb_high if action == "buy" else orb_low
-            stop_loss = orb_low if action == "buy" else orb_high
-            sl_wide = stop_loss
+        action = "buy" if setup_trend == "up" else "sell"
+        orb_level = orb_high if action == "buy" else orb_low
+        stop_loss = orb_low if action == "buy" else orb_high
+        sl_wide = stop_loss
+
+        breakout_idx = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, action)
+        if breakout_idx is None:
+            entry = orb_level
             triggered_at, trigger_price = None, None
             status = "waiting"
-            rationale = "No ORB breakout yet — waiting for a decisive close beyond the opening range."
+            rationale = f"Waiting for a breakout {'above' if action == 'buy' else 'below'} opening range ₹{orb_level:.2f}."
         else:
-            breakout_idx, action = breakout
-            orb_break_price = monitor[breakout_idx]["close"]
-            orb_level = orb_high if action == "buy" else orb_low
-            sl_wide = orb_macro_sl_buy if action == "buy" else orb_macro_sl_sell
-
             support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
             if support_res is None:
                 triggered_at, trigger_price = None, None
                 entry = orb_level
-                stop_loss = sl_wide
                 status = "pending_entry"
                 rationale = (
-                    f"Broke {'above' if action == 'buy' else 'below'} the opening range ₹{orb_level:.2f} "
-                    f"(candle closed at ₹{orb_break_price:.2f}). "
-                    f"Watching for pullback and first supporting green candle."
+                    f"Broke {'above' if action == 'buy' else 'below'} opening range ₹{orb_level:.2f}. "
+                    f"Watching for pullback and first supporting {'green' if action == 'buy' else 'red'} candle."
                 )
             else:
-                support_trigger_level, tight_stop, support_idx, hist_triggered_at = support_res
+                support_trigger_level, tight_stop, support_idx, hist_triggered_at, is_pullback_level = support_res
 
                 if hist_triggered_at is not None:
                     triggered_at = hist_triggered_at
                     trigger_price = support_trigger_level
                     entry = orb_level
-                    stop_loss = tight_stop
                     status = "triggered"
-                    if action == "buy":
-                        mode_desc = "closed above" if entry_mode == "close" else "broke above"
-                        ref_desc = "green supporting candle high"
+                    if is_pullback_level:
+                        rationale = (
+                            f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                            f"pulled back to ₹{tight_stop:.2f}, and broke "
+                            f"{'above previous pullback candle high' if action == 'buy' else 'below previous pullback candle low'} "
+                            f"₹{support_trigger_level:.2f}. Stop ₹{stop_loss:.2f}."
+                        )
                     else:
-                        mode_desc = "red candle closed below" if entry_mode == "close" else "broke below"
-                        ref_desc = "green supporting candle low"
-                    rationale = (
-                        f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}), "
-                        f"pulled back, and {mode_desc} {ref_desc} ₹{support_trigger_level:.2f}. "
-                        f"Tight stop ₹{tight_stop:.2f} · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})."
-                    )
+                        if action == "buy":
+                            mode_desc = "closed above" if entry_mode == "close" else "broke above"
+                            ref_desc = "green supporting candle high"
+                        else:
+                            mode_desc = "closed below" if entry_mode == "close" else "broke below"
+                            ref_desc = "red supporting candle low"
+                        rationale = (
+                            f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                            f"pulled back to ₹{tight_stop:.2f}, and {mode_desc} {ref_desc} ₹{support_trigger_level:.2f}. "
+                            f"Stop ₹{stop_loss:.2f}."
+                        )
                 else:
-                    # In 'touch' mode, check live LTP against the candidate support candle
+                    # In 'touch' mode, check live LTP against the candidate/pullback support candle
                     if entry_mode == "touch":
                         ltp_crossed = (
                             (action == "buy" and current_price > support_trigger_level) or
@@ -290,40 +301,52 @@ def compute_setup(
                             triggered_at = datetime.now(tz=timezone.utc)
                             trigger_price = support_trigger_level
                             entry = orb_level
-                            stop_loss = tight_stop
                             status = "triggered"
-                            rationale = (
-                                f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}), "
-                                f"pulled back, and LTP "
-                                f"{'broke above' if action == 'buy' else 'broke below'} the green supporting candle "
-                                f"{'high' if action == 'buy' else 'low'} ₹{support_trigger_level:.2f}. "
-                                f"Tight stop ₹{tight_stop:.2f} · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})."
-                            )
+                            if is_pullback_level:
+                                rationale = (
+                                    f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                                    f"pulled back to ₹{tight_stop:.2f}, and LTP broke "
+                                    f"{'above previous pullback candle high' if action == 'buy' else 'below previous pullback candle low'} "
+                                    f"₹{support_trigger_level:.2f}. Stop ₹{stop_loss:.2f}."
+                                )
+                            else:
+                                rationale = (
+                                    f"Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                                    f"pulled back to ₹{tight_stop:.2f}, and LTP broke "
+                                    f"{'above green supporting candle high' if action == 'buy' else 'below red supporting candle low'} "
+                                    f"₹{support_trigger_level:.2f}. Stop ₹{stop_loss:.2f}."
+                                )
                         else:
                             triggered_at, trigger_price = None, support_trigger_level
                             entry = orb_level
-                            stop_loss = tight_stop
                             status = "pending_entry"
-                            rationale = (
-                                f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
-                                f"Green supporting candle formed — waiting for LTP to "
-                                f"{'cross above' if action == 'buy' else 'break below'} ₹{support_trigger_level:.2f}."
-                            )
+                            if is_pullback_level:
+                                rationale = (
+                                    f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f}. "
+                                    f"Pullback ongoing — waiting for LTP to "
+                                    f"{'cross above previous candle high' if action == 'buy' else 'break below previous candle low'} ₹{support_trigger_level:.2f}."
+                                )
+                            else:
+                                rationale = (
+                                    f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f}. "
+                                    f"{'Green' if action == 'buy' else 'Red'} supporting candle formed — waiting for LTP to "
+                                    f"{'cross above' if action == 'buy' else 'break below'} ₹{support_trigger_level:.2f}."
+                                )
                     else:
                         # In 'close' mode, wait for the 3m candle to close
                         triggered_at, trigger_price = None, support_trigger_level
                         entry = orb_level
-                        stop_loss = tight_stop
                         status = "pending_entry"
-                        if action == "buy":
+                        if is_pullback_level:
                             rationale = (
-                                f"Broke above ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
-                                f"Green supporting candle formed — waiting for 3m candle to close above ₹{support_trigger_level:.2f}."
+                                f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f}. "
+                                f"Watching for pullback and first supporting {'green' if action == 'buy' else 'red'} candle."
                             )
                         else:
                             rationale = (
-                                f"Broke below ORB ₹{orb_level:.2f} (candle closed at ₹{orb_break_price:.2f}). "
-                                f"Green supporting candle formed — waiting for red 3m candle to close below ₹{support_trigger_level:.2f}."
+                                f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f}. "
+                                f"{'Green' if action == 'buy' else 'Red'} supporting candle formed — waiting for 3m candle to "
+                                f"{'close above' if action == 'buy' else 'close below'} ₹{support_trigger_level:.2f}."
                             )
 
     if status == "triggered" and trigger_price is not None:

@@ -244,12 +244,14 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                 const hasTrigger = setup.triggerPrice !== null;
                 const entryPrice = hasTrigger ? setup.triggerPrice! : setup.entry;
                 const tightDelta = Math.abs(entryPrice - setup.stopLoss);
-                const hasWideSl = setup.slWide != null;
+                const hasWideSl =
+                  setup.slWide != null &&
+                  Math.abs(setup.slWide - setup.stopLoss) > 0.05;
                 const wideDelta = hasWideSl ? Math.abs(entryPrice - setup.slWide!) : null;
 
                 return (
                   <>
-                    {/* Line 1: Tight stop + risk Δ */}
+                    {/* Line 1: Main stop + risk Δ */}
                     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", gap: 5 }}>
                       <Text variant="mono" tone="negative" style={{ fontSize: 11, lineHeight: 14 }} numberOfLines={1}>
                         SL {formatCurrency(setup.stopLoss)}
@@ -262,8 +264,8 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                       </Text>
                     </View>
 
-                    {/* Line 2: Macro stop + macro risk Δ */}
-                    {hasWideSl ? (
+                    {/* Line 2: Macro stop + macro risk Δ (only if different from primary SL) */}
+                    {hasWideSl && (
                       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "nowrap", gap: 5, opacity: 0.85 }}>
                         <Text variant="mono" tone="negative" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
                           MSL {formatCurrency(setup.slWide!)}
@@ -275,10 +277,6 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                           MΔ{formatCurrency(wideDelta!)}
                         </Text>
                       </View>
-                    ) : (
-                      <Text variant="caption" tone="muted" style={{ fontSize: 10, lineHeight: 12 }} numberOfLines={1}>
-                        Tight stop
-                      </Text>
                     )}
                   </>
                 );

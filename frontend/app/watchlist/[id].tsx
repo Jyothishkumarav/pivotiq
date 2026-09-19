@@ -220,95 +220,192 @@ function StrategySelector({
 }
 
 const ENTRY_MODE_STORAGE_KEY = "pivotiq:entry_mode";
+const INCLUDE_FIRST_CANDLE_STORAGE_KEY = "pivotiq:include_first_candle";
 
-function EntryModeToggle({
-  value,
-  onChange,
+function OrbPullbackControls({
+  entryMode,
+  onEntryModeChange,
+  includeFirstCandle,
+  onIncludeFirstCandleChange,
 }: {
-  value: "close" | "touch";
-  onChange: (mode: "close" | "touch") => void;
+  entryMode: "close" | "touch";
+  onEntryModeChange: (mode: "close" | "touch") => void;
+  includeFirstCandle: boolean;
+  onIncludeFirstCandleChange: (val: boolean) => void;
 }) {
   return (
     <View style={{ gap: 4, marginTop: 6 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
-        <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
-          Trigger on:
-        </Text>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: colors.surfaceElevated,
-            borderRadius: 8,
-            padding: 3,
-            borderWidth: 1,
-            borderColor: colors.borderSubtle,
-            gap: 4,
-          }}
-        >
-          <Pressable
-            onPress={() => onChange("close")}
-            style={({ hovered }: any) => ({
-              paddingHorizontal: spacing.md,
-              paddingVertical: 6,
-              borderRadius: 6,
-              backgroundColor:
-                value === "close"
-                  ? colors.accent
-                  : hovered
-                    ? colors.surfaceHover
-                    : "transparent",
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.lg,
+          flexWrap: "nowrap",
+          ...(Platform.OS === "web" ? ({ overflowX: "auto" } as any) : {}),
+        }}
+      >
+        {/* Trigger on Toggle */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 0 }}>
+          <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Trigger on:
+          </Text>
+          <View
+            style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 6,
-            })}
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: 8,
+              padding: 3,
+              borderWidth: 1,
+              borderColor: colors.borderSubtle,
+              gap: 4,
+            }}
           >
-            <Text
-              variant="caption"
-              style={{
-                fontWeight: "700",
-                color: value === "close" ? "#FFFFFF" : colors.textSecondary,
-                fontSize: 12,
-              }}
+            <Pressable
+              onPress={() => onEntryModeChange("close")}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.md,
+                paddingVertical: 6,
+                borderRadius: 6,
+                backgroundColor:
+                  entryMode === "close"
+                    ? colors.accent
+                    : hovered
+                      ? colors.surfaceHover
+                      : "transparent",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              })}
             >
-              🕯️ 3 Min Candle
-            </Text>
-          </Pressable>
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: "700",
+                  color: entryMode === "close" ? "#FFFFFF" : colors.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                🕯️ 3 Min Candle
+              </Text>
+            </Pressable>
 
-          <Pressable
-            onPress={() => onChange("touch")}
-            style={({ hovered }: any) => ({
-              paddingHorizontal: spacing.md,
-              paddingVertical: 6,
-              borderRadius: 6,
-              backgroundColor:
-                value === "touch"
-                  ? colors.accent
-                  : hovered
-                    ? colors.surfaceHover
-                    : "transparent",
+            <Pressable
+              onPress={() => onEntryModeChange("touch")}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.md,
+                paddingVertical: 6,
+                borderRadius: 6,
+                backgroundColor:
+                  entryMode === "touch"
+                    ? colors.accent
+                    : hovered
+                      ? colors.surfaceHover
+                      : "transparent",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              })}
+            >
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: "700",
+                  color: entryMode === "touch" ? "#FFFFFF" : colors.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                ⚡ Latest Price
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* 9:15 Candle Toggle */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 0 }}>
+          <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            9:15 Candle:
+          </Text>
+          <View
+            style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 6,
-            })}
+              backgroundColor: colors.surfaceElevated,
+              borderRadius: 8,
+              padding: 3,
+              borderWidth: 1,
+              borderColor: colors.borderSubtle,
+              gap: 4,
+            }}
           >
-            <Text
-              variant="caption"
-              style={{
-                fontWeight: "700",
-                color: value === "touch" ? "#FFFFFF" : colors.textSecondary,
-                fontSize: 12,
-              }}
+            <Pressable
+              onPress={() => onIncludeFirstCandleChange(false)}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.md,
+                paddingVertical: 6,
+                borderRadius: 6,
+                backgroundColor:
+                  !includeFirstCandle
+                    ? colors.accent
+                    : hovered
+                      ? colors.surfaceHover
+                      : "transparent",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              })}
             >
-              ⚡ Latest Price
-            </Text>
-          </Pressable>
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: "700",
+                  color: !includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                🚫 Ignore (Matches ORB+VWAP)
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => onIncludeFirstCandleChange(true)}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.md,
+                paddingVertical: 6,
+                borderRadius: 6,
+                backgroundColor:
+                  includeFirstCandle
+                    ? colors.accent
+                    : hovered
+                      ? colors.surfaceHover
+                      : "transparent",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              })}
+            >
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: "700",
+                  color: includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
+                  fontSize: 12,
+                }}
+              >
+                ✅ Include First Candle
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </View>
+
       <Text variant="caption" tone="muted" style={{ fontSize: 11, lineHeight: 14 }}>
-        {value === "close"
-          ? "3 Min Candle: Confirms entry only after 3m candle closes beyond supporting candle (filters false wicks)"
-          : "Latest Price: Triggers entry immediately on live price / wick breach"}
+        {entryMode === "close"
+          ? "3 Min Candle: Confirms entry only after 3m candle closes beyond supporting candle."
+          : "Latest Price: Triggers entry immediately on live price / wick breach."}{" "}
+        {!includeFirstCandle
+          ? "9:15 auction spike ignored to determine heights (matches ORB + VWAP)."
+          : "9:15 opening candle high/low included in ORB calculation."}
       </Text>
     </View>
   );
@@ -586,11 +683,17 @@ export default function WatchlistDetailScreen() {
   const strategy = watchlist?.strategy ?? "orb_vwap";
 
   const [entryMode, setEntryMode] = useState<"close" | "touch">("close");
+  const [includeFirstCandle, setIncludeFirstCandle] = useState<boolean>(false);
 
   useEffect(() => {
     AsyncStorage.getItem(ENTRY_MODE_STORAGE_KEY).then((stored) => {
       if (stored === "close" || stored === "touch") {
         setEntryMode(stored);
+      }
+    });
+    AsyncStorage.getItem(INCLUDE_FIRST_CANDLE_STORAGE_KEY).then((stored) => {
+      if (stored === "true" || stored === "false") {
+        setIncludeFirstCandle(stored === "true");
       }
     });
   }, []);
@@ -600,14 +703,19 @@ export default function WatchlistDetailScreen() {
     AsyncStorage.setItem(ENTRY_MODE_STORAGE_KEY, mode).catch(() => {});
   };
 
+  const handleIncludeFirstCandleChange = (val: boolean) => {
+    setIncludeFirstCandle(val);
+    AsyncStorage.setItem(INCLUDE_FIRST_CANDLE_STORAGE_KEY, String(val)).catch(() => {});
+  };
+
   const { data: strategyNotifs } = useQuery({
     queryKey: ["strategy-notifications"],
     queryFn: settingsApi.getStrategyNotifications,
   });
   const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", symbolsKey, strategy, entryMode, retestDate],
-    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode, retestDate),
+    queryKey: ["intraday", symbolsKey, strategy, entryMode, includeFirstCandle, retestDate],
+    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode, retestDate, includeFirstCandle),
     enabled: symbols.length > 0,
     refetchInterval: retestDate ? false : 60_000,
     retry: false,
@@ -668,39 +776,75 @@ export default function WatchlistDetailScreen() {
   return (
     <Screen width="wide">
       {/* Header */}
-      <View
-        style={{
-          flexDirection: isDesktop ? "row" : "column",
-          justifyContent: "space-between",
-          alignItems: isDesktop ? "flex-end" : "flex-start",
-          gap: spacing.md,
-        }}
-      >
-        <View style={{ gap: spacing.xs, flex: 1, width: "100%" }}>
-          <Pressable onPress={() => router.push("/(tabs)/watchlists")}>
-            <Text variant="caption" tone="accent">
-              ← All watchlists
+      <View style={{ gap: spacing.md }}>
+        <View
+          style={{
+            flexDirection: isDesktop ? "row" : "column",
+            justifyContent: "space-between",
+            alignItems: isDesktop ? "center" : "flex-start",
+            gap: spacing.md,
+          }}
+        >
+          <View style={{ gap: spacing.xs }}>
+            <Pressable onPress={() => router.push("/(tabs)/watchlists")}>
+              <Text variant="caption" tone="accent">
+                ← All watchlists
+              </Text>
+            </Pressable>
+            <Text variant="display">{watchlist.name}</Text>
+            <Text variant="body" tone="secondary">
+              {watchlist.items.length} stock{watchlist.items.length === 1 ? "" : "s"} · sorted by{" "}
+              {COLUMN_HEADERS.find((c) => c.key === sort.key)?.label} ({sort.dir === "asc" ? "asc" : "desc"})
             </Text>
-          </Pressable>
-          <Text variant="display">{watchlist.name}</Text>
-          <Text variant="body" tone="secondary">
-            {watchlist.items.length} stock{watchlist.items.length === 1 ? "" : "s"} · sorted by{" "}
-            {COLUMN_HEADERS.find((c) => c.key === sort.key)?.label} ({sort.dir === "asc" ? "asc" : "desc"})
-          </Text>
-          <Text variant="caption" tone="muted">
-            {retestDate
-              ? "Historical session · Retest mode (Read-only)"
-              : `Prices auto-refresh every 60s${isFetching && !isLoading ? " · refreshing…" : ""}`}
-          </Text>
+            <Text variant="caption" tone="muted">
+              {retestDate
+                ? "Historical session · Retest mode (Read-only)"
+                : `Prices auto-refresh every 60s${isFetching && !isLoading ? " · refreshing…" : ""}`}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+            <Button
+              label={`🔔 Alerts (${activeAlertsCount})`}
+              size="sm"
+              variant="secondary"
+              onPress={() => setShowStrategyAlerts(true)}
+            />
+            <Button
+              label={isFetching ? "Refreshing…" : "Refresh"}
+              size="sm"
+              variant="secondary"
+              loading={isFetching && !isLoading}
+              onPress={invalidate}
+            />
+            <Button
+              label={showAdd ? "Close" : "+ Add stock"}
+              size="sm"
+              onPress={() => setShowAdd((v) => !v)}
+            />
+            {strategy !== "orb_vwap" && !retestDate && (
+              <Button
+                label={resetTriggersMutation.isPending ? "Resetting…" : "🔄 Reset Triggers"}
+                size="sm"
+                variant="secondary"
+                loading={resetTriggersMutation.isPending}
+                onPress={() => resetTriggersMutation.mutate()}
+              />
+            )}
+          </View>
+        </View>
+
+        <View style={{ gap: spacing.xs, width: "100%" }}>
           <StrategySelector
             value={strategy}
             onChange={(next) => strategyMutation.mutate(next)}
             loading={strategyMutation.isPending}
           />
           {strategy === "orb_pullback_support" && (
-            <EntryModeToggle
-              value={entryMode}
-              onChange={handleEntryModeChange}
+            <OrbPullbackControls
+              entryMode={entryMode}
+              onEntryModeChange={handleEntryModeChange}
+              includeFirstCandle={includeFirstCandle}
+              onIncludeFirstCandleChange={handleIncludeFirstCandleChange}
             />
           )}
           <DateSelector
@@ -708,35 +852,6 @@ export default function WatchlistDetailScreen() {
             onChange={setRetestDate}
             days={tradingDays}
           />
-        </View>
-        <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-          <Button
-            label={`🔔 Alerts (${activeAlertsCount})`}
-            size="sm"
-            variant="secondary"
-            onPress={() => setShowStrategyAlerts(true)}
-          />
-          <Button
-            label={isFetching ? "Refreshing…" : "Refresh"}
-            size="sm"
-            variant="secondary"
-            loading={isFetching && !isLoading}
-            onPress={invalidate}
-          />
-          <Button
-            label={showAdd ? "Close" : "+ Add stock"}
-            size="sm"
-            onPress={() => setShowAdd((v) => !v)}
-          />
-          {strategy !== "orb_vwap" && !retestDate && (
-            <Button
-              label={resetTriggersMutation.isPending ? "Resetting…" : "🔄 Reset Triggers"}
-              size="sm"
-              variant="secondary"
-              loading={resetTriggersMutation.isPending}
-              onPress={() => resetTriggersMutation.mutate()}
-            />
-          )}
         </View>
       </View>
 

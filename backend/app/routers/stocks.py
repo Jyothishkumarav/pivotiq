@@ -97,6 +97,7 @@ async def get_intraday_snapshot(
     symbol: str,
     strategy: str = Query(default="orb_vwap"),
     entry_mode: str = Query(default="close", pattern="^(touch|close)$"),
+    include_first_candle: bool = Query(default=False),
     retest_date: str | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
 ) -> IntradaySnapshot:
@@ -113,6 +114,7 @@ async def get_intraday_snapshot(
             strategy,
             entry_mode,
             retest_date,
+            include_first_candle,
         )
     except FyersTokenExpired:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Fyers session expired.") from None
@@ -141,12 +143,13 @@ async def batch_intraday_snapshots(
     # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
     sem = asyncio.Semaphore(2)
     entry_mode = getattr(payload, "entryMode", "close") or "close"
+    include_first_candle = getattr(payload, "includeFirstCandle", False)
     retest_date = getattr(payload, "retestDate", None)
 
     async def _one(sym: str) -> tuple[str, IntradaySnapshot | None]:
         async with sem:
             try:
-                await asyncio.sleep(0.06)
+                await asyncio.sleep(0.10)
                 snap = await asyncio.to_thread(
                     intraday_analysis.compute_snapshot,
                     sym,
@@ -154,6 +157,7 @@ async def batch_intraday_snapshots(
                     payload.strategy,
                     entry_mode,
                     retest_date,
+                    include_first_candle,
                 )
             except FyersTokenExpired:
                 snap = None

@@ -19,17 +19,31 @@ export const stocksApi = {
   supportLevels: (symbol: string) => apiClient.get<SupportLevelsResponse>(`/stocks/${symbol}/support-levels`),
   candles: (symbol: string, period = "1y", interval = "1d") =>
     apiClient.get<CandlesResponse>(`/stocks/${symbol}/candles`, { period, interval }),
-  intradaySnapshot: (symbol: string, strategy = "orb_vwap", entryMode: "touch" | "close" = "close", retestDate?: string | null) =>
+  intradaySnapshot: (
+    symbol: string,
+    strategy = "orb_vwap",
+    entryMode: "touch" | "close" = "close",
+    retestDate?: string | null,
+    includeFirstCandle = false,
+  ) =>
     apiClient.get<IntradaySnapshot>(`/stocks/${symbol}/intraday-snapshot`, {
       strategy,
       entry_mode: entryMode,
+      include_first_candle: String(includeFirstCandle),
       ...(retestDate ? { retest_date: retestDate } : {}),
     }),
-  intradaySnapshots: (symbols: string[], strategy = "orb_vwap", entryMode: "touch" | "close" = "close", retestDate?: string | null) =>
+  intradaySnapshots: (
+    symbols: string[],
+    strategy = "orb_vwap",
+    entryMode: "touch" | "close" = "close",
+    retestDate?: string | null,
+    includeFirstCandle = false,
+  ) =>
     apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", {
       symbols,
       strategy,
       entryMode,
+      includeFirstCandle,
       ...(retestDate ? { retestDate } : {}),
     }),
   clearFrozenTriggers: (strategy: string, symbols?: string[], date?: string) =>

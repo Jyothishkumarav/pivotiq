@@ -43,10 +43,13 @@ async def ensure_indexes() -> None:
     except Exception:
         pass
     try:
-        await db.intraday_triggers.drop_index("symbol_1_date_1_strategy_1")
+        await db.intraday_triggers.drop_index("symbol_1_date_1_strategy_1_entryMode_1")
     except Exception:
         pass
-    await db.intraday_triggers.create_index([("symbol", 1), ("date", 1), ("strategy", 1), ("entryMode", 1)], unique=True)
+    await db.intraday_triggers.create_index(
+        [("symbol", 1), ("date", 1), ("strategy", 1), ("entryMode", 1), ("includeFirstCandle", 1)],
+        unique=True,
+    )
 
 
 async def close_client() -> None:
