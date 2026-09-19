@@ -129,8 +129,8 @@ def _find_support_entry(
                     pullback_count += 1
                     pullback_extreme = min(t_stop, c["low"])
                 elif is_green:
-                    # Consecutive green candle: update candidate to latest supporting level
-                    candidate = (c["high"], min(pullback_extreme, c["low"]), i)
+                    # Keep first supporting candle's trigger level; track lowest support low
+                    candidate = (trig_lvl, min(t_stop, c["low"]), cand_idx)
             else:
                 if is_red:
                     pullback_count += 1
@@ -151,8 +151,8 @@ def _find_support_entry(
                     pullback_count += 1
                     pullback_extreme = max(t_stop, c["high"])
                 elif is_red:
-                    # Consecutive red candle: update candidate to latest supporting level
-                    candidate = (c["low"], max(pullback_extreme, c["high"]), i)
+                    # Keep first supporting candle's trigger level; track highest support high
+                    candidate = (trig_lvl, max(t_stop, c["high"]), cand_idx)
             else:
                 if is_green:
                     pullback_count += 1
