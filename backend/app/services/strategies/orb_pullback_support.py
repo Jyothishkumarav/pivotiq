@@ -195,14 +195,15 @@ def compute_setup(
     if frozen is not None:
         action = frozen["action"]
         triggered_at = frozen["triggered_at"]
-        entry = frozen["entry"]
-        stop_loss = frozen["stop_loss"]
         trigger_price = frozen.get("trigger_price")
+        # Use trigger_price (actual entry fill) as entry; fall back to frozen["entry"]
+        entry = trigger_price if trigger_price is not None else frozen["entry"]
+        stop_loss = frozen["stop_loss"]
         sl_wide = frozen.get("sl_wide") or (orb_low if action == "buy" else orb_high)
         status = "triggered"
         _main_sl_note = f" · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})" if sl_wide else ""
         rationale = (
-            f"Broke ORB at ₹{entry:.2f}, pulled back, and broke the first support candle at ₹{trigger_price:.2f}.{_main_sl_note}"
+            f"Broke ORB, pulled back, and entered at first support candle level ₹{entry:.2f}.{_main_sl_note}"
             if trigger_price is not None
             else f"Support candle entry, tight stop ₹{stop_loss:.2f}."
         )
@@ -248,7 +249,7 @@ def compute_setup(
                     if ltp_crossed:
                         triggered_at = datetime.now(tz=timezone.utc)
                         trigger_price = support_trigger_level
-                        entry = orb_break_price
+                        entry = support_trigger_level
                         stop_loss = tight_stop
                         status = "triggered"
                         rationale = (
@@ -258,7 +259,7 @@ def compute_setup(
                         )
                     else:
                         triggered_at, trigger_price = None, support_trigger_level
-                        entry = orb_break_price
+                        entry = support_trigger_level
                         stop_loss = tight_stop
                         status = "pending_entry"
                         rationale = (
@@ -267,7 +268,7 @@ def compute_setup(
                         )
                 else:
                     triggered_at, trigger_price = cross
-                    entry = orb_break_price
+                    entry = support_trigger_level
                     stop_loss = tight_stop
                     status = "triggered"
                     rationale = (

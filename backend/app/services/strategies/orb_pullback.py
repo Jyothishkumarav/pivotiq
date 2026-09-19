@@ -212,20 +212,20 @@ def compute_setup(
     gap_bias = _gap_bias(candles_5m)
 
     if frozen is not None:
-        # Frozen state from DB: entry = ORB breakout level (threshold), trigger_price = reversal fill
+        # Frozen state from DB: trigger_price = reversal fill
         action = frozen["action"]
         triggered_at = frozen["triggered_at"]
-        entry = frozen["entry"]                       # ORB breakout close — threshold level
-        stop_loss = frozen["stop_loss"]               # tight pullback extreme stop
         trigger_price = frozen.get("trigger_price")  # actual fill at structural level
+        entry = trigger_price if trigger_price is not None else frozen["entry"]
+        stop_loss = frozen["stop_loss"]               # tight pullback extreme stop
         # sl_wide may be absent on records frozen before this field was added;
         # fall back to recomputing from the current ORB levels.
         sl_wide = frozen.get("sl_wide") or (orb_low if action == "buy" else orb_high)
         status = "triggered"
         _main_sl_note = f" · main stop ₹{sl_wide:.2f} (ORB {'low' if action == 'buy' else 'high'})" if sl_wide else ""
         rationale = (
-            f"Broke the opening range at ₹{entry:.2f}, pulled back, "
-            f"then LTP broke the pullback level ₹{trigger_price:.2f}.{_main_sl_note}"
+            f"Broke the opening range, pulled back, "
+            f"and entered at pullback level ₹{entry:.2f}.{_main_sl_note}"
             if trigger_price is not None
             else f"Breakout + pullback entry, tight stop ₹{stop_loss:.2f} (the pullback's own extreme)."
         )
@@ -280,7 +280,7 @@ def compute_setup(
                         # LTP just broke the level in the current (incomplete) bar.
                         triggered_at  = datetime.now(tz=timezone.utc)
                         trigger_price = pb_trigger_level  # fill at the structural level
-                        entry         = orb_break_price
+                        entry         = pb_trigger_level
                         stop_loss     = tight_stop
                         status = "triggered"
                         rationale = (
@@ -302,7 +302,7 @@ def compute_setup(
                 else:
                     # Historical candle already crossed the level — entry confirmed.
                     triggered_at, trigger_price = cross  # (bar open time, pb_trigger_level)
-                    entry     = orb_break_price
+                    entry     = pb_trigger_level
                     stop_loss = tight_stop
                     status = "triggered"
                     rationale = (
