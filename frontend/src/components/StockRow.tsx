@@ -49,9 +49,7 @@ function SetupPill({ setup }: { setup: TradeSetup }) {
   const meta =
     setup.status === "waiting"
       ? { color: "#F5B54A", label: "WAIT" }
-      : setup.status === "pending_entry"
-        ? { color: "#F5B54A", label: `${setup.action.toUpperCase()} (PULLBACK)` }
-        : SETUP_PILL_META[setup.action];
+      : SETUP_PILL_META[setup.action];
   return (
     <View
       style={{
