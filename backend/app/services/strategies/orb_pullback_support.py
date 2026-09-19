@@ -147,18 +147,27 @@ def _find_support_entry(
                     pullback_extreme = c["low"] if pullback_extreme is None else min(pullback_extreme, c["low"])
                 elif is_green and pullback_count >= _MIN_PULLBACK_CANDLES:
                     candidate = (c["high"], min(pullback_extreme, c["low"]), i)
+
         else:  # sell — supporting candle = first GREEN pullback candle; trigger = its LOW
+            color = "GRN" if is_green else ("RED" if is_red else "DOJ")
+            ts_str = datetime.fromtimestamp(c["ts"], tz=timezone.utc).strftime("%H:%M")
             if candidate is not None:
                 trig_lvl, t_stop, cand_idx = candidate
-                # Check if this bar triggered entry:
-                #   close mode  → a RED candle must close below the supporting green candle's LOW
-                #   touch mode  → any candle whose low dips below the trigger level
+                # close mode → RED candle must close below supporting GREEN candle's LOW
+                # touch mode → any candle whose low breaks below trigger level
                 if entry_mode == "close":
                     triggered = is_red and c["close"] < trig_lvl
                 else:
                     triggered = c["low"] < trig_lvl
+                logger.debug(
+                    "SELL %s %s O=%.2f H=%.2f L=%.2f C=%.2f | cand_trig=%.2f cand_stop=%.2f "
+                    "is_red=%s triggered=%s (mode=%s)",
+                    ts_str, color, c["open"], c["high"], c["low"], c["close"],
+                    trig_lvl, t_stop, is_red, triggered, entry_mode,
+                )
                 if triggered:
                     triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
+                    logger.debug("SELL TRIGGERED at %s trig_lvl=%.2f close=%.2f", ts_str, trig_lvl, c["close"])
                     return trig_lvl, t_stop, cand_idx, triggered_at
                 # More GREEN candles: pullback extending higher — widen stop, lower trigger
                 if is_green:
@@ -169,6 +178,15 @@ def _find_support_entry(
                     # First GREEN candle after SELL breakout = supporting candle
                     pullback_extreme = c["high"] if pullback_extreme is None else max(pullback_extreme, c["high"])
                     candidate = (c["low"], pullback_extreme, i)
+                    logger.debug(
+                        "SELL SUPPORT %s GRN O=%.2f H=%.2f L=%.2f C=%.2f | trig=%.2f stop=%.2f",
+                        ts_str, c["open"], c["high"], c["low"], c["close"], c["low"], pullback_extreme,
+                    )
+                else:
+                    logger.debug(
+                        "SELL %s %s O=%.2f H=%.2f L=%.2f C=%.2f | no green candidate yet",
+                        ts_str, color, c["open"], c["high"], c["low"], c["close"],
+                    )
 
     if candidate is not None:
         trig_lvl, t_stop, cand_idx = candidate
