@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -314,6 +314,152 @@ function EntryModeToggle({
   );
 }
 
+interface TradingDay {
+  iso: string;
+  label: string;
+  shortLabel: string;
+  dayOfWeek: string;
+  isToday: boolean;
+}
+
+function getRecentTradingDays(maxDays = 30): TradingDay[] {
+  const days: TradingDay[] = [];
+  const now = new Date();
+  const curr = new Date(now);
+  let checked = 0;
+
+  while (days.length < maxDays && checked < 60) {
+    const dayOfWeek = curr.getDay(); // 0 = Sun, 6 = Sat
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      const year = curr.getFullYear();
+      const month = String(curr.getMonth() + 1).padStart(2, "0");
+      const date = String(curr.getDate()).padStart(2, "0");
+      const iso = `${year}-${month}-${date}`;
+
+      const isToday =
+        iso ===
+        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+      const dayName = dayNames[dayOfWeek];
+      const monthName = monthNames[curr.getMonth()];
+
+      days.push({
+        iso,
+        label: isToday ? "Today" : `${dayName} ${curr.getDate()} ${monthName}`,
+        shortLabel: isToday ? "Today" : `${curr.getDate()} ${monthName}`,
+        dayOfWeek: dayName,
+        isToday,
+      });
+    }
+    curr.setDate(curr.getDate() - 1);
+    checked++;
+  }
+  return days;
+}
+
+function DateSelector({
+  value,
+  onChange,
+  days,
+}: {
+  value: string | null;
+  onChange: (date: string | null) => void;
+  days: TradingDay[];
+}) {
+  return (
+    <View style={{ gap: spacing.xs, marginTop: spacing.xs }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Text variant="caption" tone="muted" style={{ textTransform: "uppercase", letterSpacing: 1, fontWeight: "600" }}>
+          📅 Session / Retest Mode (30 Days)
+        </Text>
+        {value ? (
+          <Pressable onPress={() => onChange(null)}>
+            <Text variant="caption" tone="accent" style={{ fontWeight: "700" }}>
+              ⚡ Back to Live
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+      >
+        {/* Live / Today pill */}
+        <Pressable
+          onPress={() => onChange(null)}
+          style={({ hovered }: any) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+            paddingHorizontal: spacing.md,
+            paddingVertical: 6,
+            borderRadius: 8,
+            borderWidth: 1.5,
+            borderColor: value === null ? colors.positive : hovered ? colors.border : colors.borderSubtle,
+            backgroundColor:
+              value === null
+                ? "rgba(61,219,159,0.12)"
+                : hovered
+                  ? colors.surfaceElevated
+                  : "transparent",
+          })}
+        >
+          <Text style={{ fontSize: 12 }}>⚡</Text>
+          <Text
+            variant="caption"
+            style={{
+              fontWeight: value === null ? "700" : "500",
+              color: value === null ? colors.positive : colors.textSecondary,
+            }}
+          >
+            Live (Today)
+          </Text>
+        </Pressable>
+
+        {/* Historical trading days */}
+        {days.map((d) => {
+          // If it's today's date, it's represented by the Live button, but allow explicit selection if desired
+          const selected = value === d.iso;
+          return (
+            <Pressable
+              key={d.iso}
+              onPress={() => onChange(d.iso)}
+              style={({ hovered }: any) => ({
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 5,
+                paddingHorizontal: spacing.md,
+                paddingVertical: 6,
+                borderRadius: 8,
+                borderWidth: 1.5,
+                borderColor: selected ? "#F5B54A" : hovered ? colors.border : colors.borderSubtle,
+                backgroundColor: selected
+                  ? "rgba(245,181,74,0.15)"
+                  : hovered
+                    ? colors.surfaceElevated
+                    : "transparent",
+              })}
+            >
+              <Text
+                variant="caption"
+                style={{
+                  fontWeight: selected ? "700" : "500",
+                  color: selected ? "#F5B54A" : colors.textSecondary,
+                }}
+              >
+                {d.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 function IntradayLegend({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
@@ -425,6 +571,9 @@ export default function WatchlistDetailScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === "web" && width >= layout.wideBreakpoint;
 
+  const [retestDate, setRetestDate] = useState<string | null>(null);
+  const tradingDays = useMemo(() => getRecentTradingDays(30), []);
+
   const { data: watchlists, isLoading, isFetching } = useQuery({
     queryKey: ["watchlists"],
     queryFn: watchlistsApi.list,
@@ -457,10 +606,10 @@ export default function WatchlistDetailScreen() {
   });
   const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", symbolsKey, strategy, entryMode],
-    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode),
+    queryKey: ["intraday", symbolsKey, strategy, entryMode, retestDate],
+    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode, retestDate),
     enabled: symbols.length > 0,
-    refetchInterval: 60_000,
+    refetchInterval: retestDate ? false : 60_000,
     retry: false,
   });
   const intradayMap = intradayData?.snapshots ?? {};
@@ -471,7 +620,10 @@ export default function WatchlistDetailScreen() {
     enabled: addSymbol.trim().length > 0,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+    queryClient.invalidateQueries({ queryKey: ["intraday"] });
+  };
 
   const addMutation = useMutation({
     mutationFn: (symbol: string) => watchlistsApi.addItem(id, symbol),
@@ -507,7 +659,7 @@ export default function WatchlistDetailScreen() {
 
   if (isLoading || !watchlist) {
     return (
-      <Screen>
+      <Screen width="wide">
         <LoadingBlock label="Loading watchlist…" />
       </Screen>
     );
@@ -524,7 +676,7 @@ export default function WatchlistDetailScreen() {
           gap: spacing.md,
         }}
       >
-        <View style={{ gap: spacing.xs, flex: 1 }}>
+        <View style={{ gap: spacing.xs, flex: 1, width: "100%" }}>
           <Pressable onPress={() => router.push("/(tabs)/watchlists")}>
             <Text variant="caption" tone="accent">
               ← All watchlists
@@ -536,8 +688,9 @@ export default function WatchlistDetailScreen() {
             {COLUMN_HEADERS.find((c) => c.key === sort.key)?.label} ({sort.dir === "asc" ? "asc" : "desc"})
           </Text>
           <Text variant="caption" tone="muted">
-            Prices auto-refresh every 60s
-            {isFetching && !isLoading ? " · refreshing…" : ""}
+            {retestDate
+              ? "Historical session · Retest mode (Read-only)"
+              : `Prices auto-refresh every 60s${isFetching && !isLoading ? " · refreshing…" : ""}`}
           </Text>
           <StrategySelector
             value={strategy}
@@ -550,6 +703,11 @@ export default function WatchlistDetailScreen() {
               onChange={handleEntryModeChange}
             />
           )}
+          <DateSelector
+            value={retestDate}
+            onChange={setRetestDate}
+            days={tradingDays}
+          />
         </View>
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <Button
@@ -570,7 +728,7 @@ export default function WatchlistDetailScreen() {
             size="sm"
             onPress={() => setShowAdd((v) => !v)}
           />
-          {strategy !== "orb_vwap" && (
+          {strategy !== "orb_vwap" && !retestDate && (
             <Button
               label={resetTriggersMutation.isPending ? "Resetting…" : "🔄 Reset Triggers"}
               size="sm"
@@ -581,6 +739,44 @@ export default function WatchlistDetailScreen() {
           )}
         </View>
       </View>
+
+      {/* Retest Banner */}
+      {retestDate ? (
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            borderRadius: 8,
+            backgroundColor: "rgba(245, 181, 74, 0.12)",
+            borderWidth: 1,
+            borderColor: "rgba(245, 181, 74, 0.35)",
+            marginTop: spacing.xs,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Text style={{ fontSize: 14 }}>📅</Text>
+            <Text variant="caption" style={{ color: "#F5B54A", fontWeight: "600" }}>
+              Retest Mode · Viewing {tradingDays.find((d) => d.iso === retestDate)?.label ?? retestDate} (Read-Only)
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setRetestDate(null)}
+            style={({ hovered }: any) => ({
+              paddingHorizontal: spacing.sm,
+              paddingVertical: 4,
+              borderRadius: 4,
+              backgroundColor: hovered ? "rgba(245, 181, 74, 0.25)" : "rgba(245, 181, 74, 0.18)",
+            })}
+          >
+            <Text variant="caption" style={{ color: "#F5B54A", fontWeight: "700" }}>
+              ✕ Return to Live
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Add stock (collapsible) */}
       {showAdd ? (

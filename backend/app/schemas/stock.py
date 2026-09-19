@@ -115,12 +115,14 @@ class IntradaySnapshot(BaseModel):
     candleCount: int
     tradeSetup: TradeSetup | None = None
     updatedAt: datetime
+    retestDate: str | None = None
 
 
 class IntradaySnapshotsRequest(BaseModel):
     symbols: list[str]
     strategy: str = "orb_vwap"
     entryMode: Literal["touch", "close"] = "close"
+    retestDate: str | None = None
 
 
 class IntradaySnapshotsResponse(BaseModel):

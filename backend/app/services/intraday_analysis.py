@@ -504,23 +504,27 @@ def compute_snapshot(
     access_token: str,
     strategy: str = "orb_vwap",
     entry_mode: str = "close",
+    retest_date: str | None = None,
 ) -> IntradaySnapshot | None:
-    """Fetch today's 5-min candles and reduce them to an ORB + VWAP snapshot.
+    """Fetch candles and reduce them to an ORB snapshot.
 
     `strategy` selects which pluggable trade-setup logic builds the
-    `tradeSetup` field — `"orb_vwap"` (default) is the original, untouched
-    behavior. Anything else is dispatched to `app.services.strategies`.
+    `tradeSetup` field.
+    `retest_date` when supplied runs in read-only retest mode on historical
+    candles for that specific ISO date (YYYY-MM-DD), skipping Mongo state
+    writes and telegram alerts.
 
     Returns None if Fyers can't be reached, market has no candles yet, or
     the token has expired.
     """
     symbol = symbol.upper()
-    cache_key = f"{symbol}:{strategy}:{entry_mode}"
+    is_retest = bool(retest_date)
+    cache_key = f"{symbol}:{strategy}:{entry_mode}:{retest_date or 'live'}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
 
-    today = _latest_trading_date()
+    today = retest_date if is_retest else _latest_trading_date()
 
     # 5-min candles are used ONLY for defining the ORB high/low from the first 20 min.
     # 3-min candles power everything after 9:35 (VWAP, current price, trigger detection)
@@ -532,14 +536,15 @@ def compute_snapshot(
     except FyersTokenExpired:
         raise
     except FyersError as exc:
-        logger.warning("Intraday 5m fetch failed for %s: %s", symbol, exc)
+        logger.warning("Intraday 5m fetch failed for %s on %s: %s", symbol, today, exc)
         return None
 
     candles_5m = _parse_candles(resp_5m.get("candles") or [])
 
-    # If the candidate date has no trading bars (e.g. market holiday during a weekday),
+    # In live mode: if candidate date has no trading bars (holiday during weekday),
     # step back to the prior business day so users can still see the last active session.
-    if not candles_5m:
+    # In retest mode: do not step back; return None if the requested historical date has no data.
+    if not candles_5m and not is_retest:
         prev_d = datetime.fromisoformat(today).date() - timedelta(days=1)
         while prev_d.weekday() >= 5:
             prev_d -= timedelta(days=1)
@@ -623,13 +628,12 @@ def compute_snapshot(
     entry_cutoff_ts = _entry_cutoff_ts(today)
 
     if strategy != "orb_vwap":
-        # Breakout confirmation must stay on completed 3-min candles (below) —
-        # only the *displayed/compared* price gets refreshed to the live
-        # quote here, since the last historical candle's close can lag the
-        # real LTP by up to a few minutes.
-        live_quote = market_data.get_quote(symbol, access_token=access_token)
-        if live_quote is not None and live_quote.ltp:
-            current_price = live_quote.ltp
+        # In live mode, refresh displayed current_price to the real-time LTP quote.
+        # In retest mode, strictly use the historical session's candle close price.
+        if not is_retest:
+            live_quote = market_data.get_quote(symbol, access_token=access_token)
+            if live_quote is not None and live_quote.ltp:
+                current_price = live_quote.ltp
 
         trade_setup = _compute_pluggable_setup(
             strategy=strategy,
@@ -645,6 +649,7 @@ def compute_snapshot(
             trigger_bar_secs=trigger_bar_secs,
             entry_cutoff_ts=entry_cutoff_ts,
             entry_mode=entry_mode,
+            is_retest=is_retest,
         )
     else:
         # Strong, well-supported gap-open locks out the opposite direction
@@ -655,7 +660,7 @@ def compute_snapshot(
         elif gap_bias == "sell" and setup_trend == "up":
             setup_trend = "flat"
 
-        frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode)
+        frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode) if not is_retest else None
         if frozen is not None:
             # Already triggered earlier today — keep the original action + timestamp
             # constant regardless of how the monitor bar set reshuffles on refresh.
@@ -673,16 +678,15 @@ def compute_snapshot(
                 if setup_trend == "down" and c["low"] < orb_low:
                     triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
-            if triggered_at is not None:
+            if triggered_at is not None and not is_retest:
                 frozen = _trigger_state.freeze(symbol, today, triggered_at, setup_trend, entry_mode=entry_mode)
                 triggered_at = frozen["triggered_at"]
                 setup_trend = frozen["action"]
 
-        # Once triggered, watch for the stop-loss level being breached — freezes
-        # exactly once per symbol/day, same pattern as the trigger itself, so the
-        # caller can fire a single "stop-loss hit, trade failed" alert.
+        # Once triggered, watch for the stop-loss level being breached across all monitor bars
+        # right up to session close (including the final 30 minutes).
         sl_hit_at: datetime | None = frozen["sl_hit_at"] if frozen is not None else None
-        if frozen is not None and sl_hit_at is None and triggered_at is not None:
+        if sl_hit_at is None and triggered_at is not None:
             stop_loss = orb_low if setup_trend == "buy" else orb_high
             sl_trigger_ts = triggered_at.timestamp() - trigger_bar_secs
             for c in monitor:
@@ -694,7 +698,7 @@ def compute_snapshot(
                 if setup_trend == "sell" and c["high"] > stop_loss:
                     sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
-            if sl_hit_at is not None:
+            if sl_hit_at is not None and not is_retest:
                 updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, entry_mode=entry_mode)
                 if updated is not None:
                     sl_hit_at = updated["sl_hit_at"]
@@ -727,13 +731,13 @@ def compute_snapshot(
         candleCount=len(monitor),
         tradeSetup=trade_setup,
         updatedAt=datetime.now(timezone.utc),
+        retestDate=retest_date,
     )
     _cache.set(cache_key, snapshot)
     return snapshot
 
 
 def _compute_pluggable_setup(
-    *,
     strategy: str,
     symbol: str,
     today: str,
@@ -747,6 +751,7 @@ def _compute_pluggable_setup(
     trigger_bar_secs: int,
     entry_cutoff_ts: float,
     entry_mode: str = "close",
+    is_retest: bool = False,
 ) -> TradeSetup:
     """Dispatches to a non-default strategy module, wiring its freeze/SL-hit
     state through the same shared `_trigger_state` cache (namespaced by
@@ -754,11 +759,11 @@ def _compute_pluggable_setup(
 
     `entry_cutoff_ts` is forwarded so every strategy blocks FRESH entries
     past 14:45 IST the same way — already-triggered setups still get their
-    SL monitored off the full `monitor` regardless."""
+    SL monitored off the full `monitor` regardless (including the final 30 mins)."""
     if strategy == "context_gated":
         from app.services.strategies import context_gated
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
         setup, freeze_payload = context_gated.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -772,7 +777,7 @@ def _compute_pluggable_setup(
             entry_cutoff_ts=entry_cutoff_ts,
             frozen=frozen,
         )
-        if frozen is None and freeze_payload is not None:
+        if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
@@ -787,21 +792,26 @@ def _compute_pluggable_setup(
             setup.triggeredAt = frozen["triggered_at"]
             setup.status = "triggered"
 
-        if frozen is not None and frozen.get("sl_hit_at") is None and setup.triggeredAt is not None:
+        sl_hit_at = frozen.get("sl_hit_at") if frozen is not None else None
+        if sl_hit_at is None and setup.triggeredAt is not None:
+            action = frozen["action"] if frozen is not None else setup.action
+            stop_loss = frozen["stop_loss"] if frozen is not None else setup.stopLoss
             sl_hit_at = context_gated.check_sl_hit(
-                monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
+                monitor, action, stop_loss, setup.triggeredAt, trigger_bar_secs,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
-                if updated is not None:
-                    setup.slHitAt = updated["sl_hit_at"]
-                    setup.status = "sl_hit"
+                if not is_retest:
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    if updated is not None:
+                        sl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = sl_hit_at
+                setup.status = "sl_hit"
         return setup
 
     if strategy == "orb_pullback":
         from app.services.strategies import orb_pullback
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
         setup, freeze_payload = orb_pullback.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -815,7 +825,7 @@ def _compute_pluggable_setup(
             entry_cutoff_ts=entry_cutoff_ts,
             frozen=frozen,
         )
-        if frozen is None and freeze_payload is not None:
+        if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
@@ -832,21 +842,26 @@ def _compute_pluggable_setup(
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
 
-        if frozen is not None and frozen.get("sl_hit_at") is None and setup.triggeredAt is not None:
+        sl_hit_at = frozen.get("sl_hit_at") if frozen is not None else None
+        if sl_hit_at is None and setup.triggeredAt is not None:
+            action = frozen["action"] if frozen is not None else setup.action
+            stop_loss = frozen["stop_loss"] if frozen is not None else setup.stopLoss
             sl_hit_at = orb_pullback.check_sl_hit(
-                monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
+                monitor, action, stop_loss, setup.triggeredAt, trigger_bar_secs,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
-                if updated is not None:
-                    setup.slHitAt = updated["sl_hit_at"]
-                    setup.status = "sl_hit"
+                if not is_retest:
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    if updated is not None:
+                        sl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = sl_hit_at
+                setup.status = "sl_hit"
         return setup
 
     if strategy == "orb_pullback_support":
         from app.services.strategies import orb_pullback_support
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode) if not is_retest else None
         setup, freeze_payload = orb_pullback_support.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -861,7 +876,7 @@ def _compute_pluggable_setup(
             entry_mode=entry_mode,
             frozen=frozen,
         )
-        if frozen is None and freeze_payload is not None:
+        if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
@@ -879,15 +894,20 @@ def _compute_pluggable_setup(
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
 
-        if frozen is not None and frozen.get("sl_hit_at") is None and setup.triggeredAt is not None:
+        sl_hit_at = frozen.get("sl_hit_at") if frozen is not None else None
+        if sl_hit_at is None and setup.triggeredAt is not None:
+            action = frozen["action"] if frozen is not None else setup.action
+            stop_loss = frozen["stop_loss"] if frozen is not None else setup.stopLoss
             sl_hit_at = orb_pullback_support.check_sl_hit(
-                monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
+                monitor, action, stop_loss, setup.triggeredAt, trigger_bar_secs, entry_mode=entry_mode,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
-                if updated is not None:
-                    setup.slHitAt = updated["sl_hit_at"]
-                    setup.status = "sl_hit"
+                if not is_retest:
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
+                    if updated is not None:
+                        sl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = sl_hit_at
+                setup.status = "sl_hit"
         return setup
 
     raise ValueError(f"Unknown strategy: {strategy!r}")

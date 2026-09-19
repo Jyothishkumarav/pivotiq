@@ -203,6 +203,7 @@ export interface IntradaySnapshot {
   candleCount: number;
   tradeSetup: TradeSetup | null;
   updatedAt: string;
+  retestDate?: string | null;
 }
 
 export interface IntradaySnapshotsResponse {

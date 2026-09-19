@@ -97,6 +97,7 @@ async def get_intraday_snapshot(
     symbol: str,
     strategy: str = Query(default="orb_vwap"),
     entry_mode: str = Query(default="close", pattern="^(touch|close)$"),
+    retest_date: str | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
 ) -> IntradaySnapshot:
     if not market_data.symbol_exists(symbol):
@@ -105,16 +106,24 @@ async def get_intraday_snapshot(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
     token = await _require_fyers_token(current_user)
     try:
-        snapshot = await asyncio.to_thread(intraday_analysis.compute_snapshot, symbol, token, strategy, entry_mode)
+        snapshot = await asyncio.to_thread(
+            intraday_analysis.compute_snapshot,
+            symbol,
+            token,
+            strategy,
+            entry_mode,
+            retest_date,
+        )
     except FyersTokenExpired:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Fyers session expired.") from None
     if snapshot is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No intraday data yet — is the market open?",
+            detail="No intraday data found for this date.",
         )
-    asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot, current_user["_id"]))
-    asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot, current_user["_id"]))
+    if not retest_date:
+        asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot, current_user["_id"]))
+        asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot, current_user["_id"]))
     return snapshot
 
 
@@ -132,13 +141,19 @@ async def batch_intraday_snapshots(
     # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
     sem = asyncio.Semaphore(2)
     entry_mode = getattr(payload, "entryMode", "close") or "close"
+    retest_date = getattr(payload, "retestDate", None)
 
     async def _one(sym: str) -> tuple[str, IntradaySnapshot | None]:
         async with sem:
             try:
                 await asyncio.sleep(0.06)
                 snap = await asyncio.to_thread(
-                    intraday_analysis.compute_snapshot, sym, token, payload.strategy, entry_mode
+                    intraday_analysis.compute_snapshot,
+                    sym,
+                    token,
+                    payload.strategy,
+                    entry_mode,
+                    retest_date,
                 )
             except FyersTokenExpired:
                 snap = None
@@ -146,10 +161,11 @@ async def batch_intraday_snapshots(
 
     user_id = current_user["_id"]
     results = await asyncio.gather(*[_one(s) for s in payload.symbols[:50]])
-    for _, snap in results:
-        if snap is not None:
-            asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id))
-            asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id))
+    if not retest_date:
+        for _, snap in results:
+            if snap is not None:
+                asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id))
+                asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id))
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),

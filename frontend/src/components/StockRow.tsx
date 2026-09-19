@@ -102,12 +102,14 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === "web" && width >= layout.wideBreakpoint;
 
-  // Re-derive trend and VWAP delta from the LIVE LTP (item.ltp) rather than the
-  // snapshot's currentPrice (which is the last 5-min candle close and may be stale).
-  const liveTrend: IntradaySnapshot["trend"] | null = intraday && item.ltp !== null
-    ? item.ltp > intraday.openingRangeHigh
+  // In retest mode, use the historical snapshot's currentPrice; otherwise prefer live LTP.
+  const effectiveLtp = intraday?.retestDate ? intraday.currentPrice : (item.ltp ?? intraday?.currentPrice ?? null);
+
+  // Re-derive trend and VWAP delta from the effective LTP.
+  const liveTrend: IntradaySnapshot["trend"] | null = intraday && effectiveLtp !== null
+    ? effectiveLtp > intraday.openingRangeHigh
       ? "up"
-      : item.ltp < intraday.openingRangeLow
+      : effectiveLtp < intraday.openingRangeLow
         ? "down"
         : "flat"
     : intraday?.trend ?? null;
@@ -126,7 +128,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
             backgroundColor: hovered ? colors.surfaceElevated : colors.surface,
           }}
         >
-          {/* Symbol column */}
+          {/* Symbol + intraday badge */}
           <View style={{ flex: isDesktop ? 1.4 : 1.2, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
@@ -141,23 +143,27 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
 
           {/* LTP column */}
           <View style={{ flex: 0.75, alignItems: "flex-end" }}>
-            <Text variant="mono">{item.ltp !== null ? formatCurrency(item.ltp) : "—"}</Text>
+            <Text variant="mono">{effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}</Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
           <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
-            {item.changePercent !== null ? (
+            {item.changePercent !== null && !intraday?.retestDate ? (
               <Text variant="mono" tone={isUp ? "positive" : "negative"}>
                 {formatPercent(item.changePercent)}
+              </Text>
+            ) : intraday?.retestDate ? (
+              <Text variant="caption" tone="muted">
+                Session
               </Text>
             ) : (
               <Text variant="mono" tone="muted">
                 —
               </Text>
             )}
-            {intraday && intraday.vwap > 0 && item.ltp !== null ? (
+            {intraday && intraday.vwap > 0 && effectiveLtp !== null ? (
               (() => {
-                const vwapDelta = ((item.ltp - intraday.vwap) / intraday.vwap) * 100;
+                const vwapDelta = ((effectiveLtp - intraday.vwap) / intraday.vwap) * 100;
                 const vwapUp = vwapDelta >= 0;
                 return (
                   <Text
@@ -313,7 +319,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                     </Text>
                   );
                 }
-                const ref = item.ltp ?? intraday.currentPrice;
+                const ref = effectiveLtp ?? intraday.currentPrice;
                 const diff = ref - intraday.tradeSetup.entry;
                 const pct = intraday.tradeSetup.entry > 0
                   ? (diff / intraday.tradeSetup.entry) * 100
@@ -351,9 +357,9 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
 
           {/* Δ Entry column: signed ₹ + % — positive means trade is going in your favor */}
           <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && item.ltp !== null ? (
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
-                const rawDiff = item.ltp - intraday.tradeSetup.entry;
+                const rawDiff = effectiveLtp - intraday.tradeSetup.entry;
                 const signedDiff = intraday.tradeSetup.action === "sell" ? -rawDiff : rawDiff;
                 const pct = intraday.tradeSetup.entry > 0
                   ? (signedDiff / intraday.tradeSetup.entry) * 100
@@ -381,9 +387,9 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
 
           {/* Δ SL column: room to stop loss (positive = safe, negative = past stop) */}
           <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && item.ltp !== null ? (
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
-                const rawGap = item.ltp - intraday.tradeSetup.stopLoss;
+                const rawGap = effectiveLtp - intraday.tradeSetup.stopLoss;
                 const roomToSl = intraday.tradeSetup.action === "sell" ? -rawGap : rawGap;
                 const pct = intraday.tradeSetup.stopLoss > 0
                   ? (roomToSl / intraday.tradeSetup.stopLoss) * 100

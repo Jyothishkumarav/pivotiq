@@ -375,11 +375,25 @@ def compute_setup(
     return setup, freeze_payload
 
 
-def check_sl_hit(monitor: list[dict], action: str, stop_loss: float, triggered_at: datetime, trigger_bar_secs: int) -> datetime | None:
-    sl_trigger_ts = triggered_at.timestamp() - trigger_bar_secs
+def check_sl_hit(
+    monitor: list[dict],
+    action: str,
+    stop_loss: float,
+    triggered_at: datetime,
+    trigger_bar_secs: int,
+    entry_mode: str = "close",
+) -> datetime | None:
+    trig_ts = triggered_at.timestamp()
     for c in monitor:
-        if c["ts"] < sl_trigger_ts:
-            continue
+        # In close mode, entry occurs at the close of the trigger candle, so only
+        # subsequent candles can hit the stop loss.
+        # In touch mode, entry occurs during the trigger candle, so that candle itself can hit SL.
+        if entry_mode == "close":
+            if c["ts"] <= trig_ts:
+                continue
+        else:
+            if c["ts"] < trig_ts:
+                continue
         if action == "buy" and c["low"] < stop_loss:
             return datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
         if action == "sell" and c["high"] > stop_loss:
