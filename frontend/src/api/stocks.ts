@@ -19,8 +19,8 @@ export const stocksApi = {
   supportLevels: (symbol: string) => apiClient.get<SupportLevelsResponse>(`/stocks/${symbol}/support-levels`),
   candles: (symbol: string, period = "1y", interval = "1d") =>
     apiClient.get<CandlesResponse>(`/stocks/${symbol}/candles`, { period, interval }),
-  intradaySnapshot: (symbol: string) =>
-    apiClient.get<IntradaySnapshot>(`/stocks/${symbol}/intraday-snapshot`),
-  intradaySnapshots: (symbols: string[], strategy = "orb_vwap") =>
-    apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", { symbols, strategy }),
+  intradaySnapshot: (symbol: string, strategy = "orb_vwap", entryMode: "touch" | "close" = "close") =>
+    apiClient.get<IntradaySnapshot>(`/stocks/${symbol}/intraday-snapshot`, { strategy, entry_mode: entryMode }),
+  intradaySnapshots: (symbols: string[], strategy = "orb_vwap", entryMode: "touch" | "close" = "close") =>
+    apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", { symbols, strategy, entryMode }),
 };

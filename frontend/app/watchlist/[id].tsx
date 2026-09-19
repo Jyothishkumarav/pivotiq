@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Animated, Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, LoadingBlock, Screen, Text } from "@/components/ui";
@@ -218,6 +219,96 @@ function StrategySelector({
   );
 }
 
+const ENTRY_MODE_STORAGE_KEY = "pivotiq:entry_mode";
+
+function EntryModeToggle({
+  value,
+  onChange,
+}: {
+  value: "close" | "touch";
+  onChange: (mode: "close" | "touch") => void;
+}) {
+  return (
+    <View style={{ gap: 4, marginTop: 4 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          backgroundColor: colors.surfaceElevated,
+          borderRadius: 8,
+          padding: 2,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+          alignSelf: "flex-start",
+        }}
+      >
+        <Pressable
+          onPress={() => onChange("close")}
+          style={({ hovered }: any) => ({
+            paddingHorizontal: spacing.sm,
+            paddingVertical: 5,
+            borderRadius: 6,
+            backgroundColor:
+              value === "close"
+                ? colors.accent
+                : hovered
+                  ? colors.surfaceHover
+                  : "transparent",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+          })}
+        >
+          <Text
+            variant="caption"
+            style={{
+              fontWeight: "600",
+              color: value === "close" ? "#FFFFFF" : colors.textSecondary,
+              fontSize: 12,
+            }}
+          >
+            🕯️ 3m Close
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => onChange("touch")}
+          style={({ hovered }: any) => ({
+            paddingHorizontal: spacing.sm,
+            paddingVertical: 5,
+            borderRadius: 6,
+            backgroundColor:
+              value === "touch"
+                ? colors.accent
+                : hovered
+                  ? colors.surfaceHover
+                  : "transparent",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+          })}
+        >
+          <Text
+            variant="caption"
+            style={{
+              fontWeight: "600",
+              color: value === "touch" ? "#FFFFFF" : colors.textSecondary,
+              fontSize: 12,
+            }}
+          >
+            ⚡ LTP Break
+          </Text>
+        </Pressable>
+      </View>
+      <Text variant="caption" tone="muted" style={{ fontSize: 11, lineHeight: 14 }}>
+        {value === "close"
+          ? "3m Close: Confirms entry only after 3m candle closes beyond supporting candle (filters false wicks)"
+          : "LTP Break: Triggers entry immediately on live price breach"}
+      </Text>
+    </View>
+  );
+}
+
 function IntradayLegend({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
@@ -340,14 +431,29 @@ export default function WatchlistDetailScreen() {
   const symbolsKey = symbols.join(",");
   const strategy = watchlist?.strategy ?? "orb_vwap";
 
+  const [entryMode, setEntryMode] = useState<"close" | "touch">("close");
+
+  useEffect(() => {
+    AsyncStorage.getItem(ENTRY_MODE_STORAGE_KEY).then((stored) => {
+      if (stored === "close" || stored === "touch") {
+        setEntryMode(stored);
+      }
+    });
+  }, []);
+
+  const handleEntryModeChange = (mode: "close" | "touch") => {
+    setEntryMode(mode);
+    AsyncStorage.setItem(ENTRY_MODE_STORAGE_KEY, mode).catch(() => {});
+  };
+
   const { data: strategyNotifs } = useQuery({
     queryKey: ["strategy-notifications"],
     queryFn: settingsApi.getStrategyNotifications,
   });
   const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", symbolsKey, strategy],
-    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy),
+    queryKey: ["intraday", symbolsKey, strategy, entryMode],
+    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode),
     enabled: symbols.length > 0,
     refetchInterval: 60_000,
     retry: false,
@@ -421,6 +527,12 @@ export default function WatchlistDetailScreen() {
             onChange={(next) => strategyMutation.mutate(next)}
             loading={strategyMutation.isPending}
           />
+          {strategy === "orb_pullback_support" && (
+            <EntryModeToggle
+              value={entryMode}
+              onChange={handleEntryModeChange}
+            />
+          )}
         </View>
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <Button

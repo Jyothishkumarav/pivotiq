@@ -95,6 +95,7 @@ async def _require_fyers_token(current_user: dict) -> str:
 async def get_intraday_snapshot(
     symbol: str,
     strategy: str = Query(default="orb_vwap"),
+    entry_mode: str = Query(default="close", pattern="^(touch|close)$"),
     current_user: dict = Depends(get_current_user),
 ) -> IntradaySnapshot:
     if not market_data.symbol_exists(symbol):
@@ -103,7 +104,7 @@ async def get_intraday_snapshot(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
     token = await _require_fyers_token(current_user)
     try:
-        snapshot = await asyncio.to_thread(intraday_analysis.compute_snapshot, symbol, token, strategy)
+        snapshot = await asyncio.to_thread(intraday_analysis.compute_snapshot, symbol, token, strategy, entry_mode)
     except FyersTokenExpired:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Fyers session expired.") from None
     if snapshot is None:
@@ -129,12 +130,15 @@ async def batch_intraday_snapshots(
     # Each snapshot makes 2 Fyers calls (5m + 3m). Fyers rate-limits at ~10 req/s,
     # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
     sem = asyncio.Semaphore(2)
+    entry_mode = getattr(payload, "entryMode", "close") or "close"
 
     async def _one(sym: str) -> tuple[str, IntradaySnapshot | None]:
         async with sem:
             try:
                 await asyncio.sleep(0.06)
-                snap = await asyncio.to_thread(intraday_analysis.compute_snapshot, sym, token, payload.strategy)
+                snap = await asyncio.to_thread(
+                    intraday_analysis.compute_snapshot, sym, token, payload.strategy, entry_mode
+                )
             except FyersTokenExpired:
                 snap = None
         return sym.upper(), snap

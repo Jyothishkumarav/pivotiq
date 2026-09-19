@@ -27,12 +27,12 @@ _IST = ZoneInfo("Asia/Kolkata")
 _TRIGGER_CACHE_TTL_SECONDS = 8 * 60 * 60  # 8h: roughly one trading session
 
 
-def _trigger_cache_key(symbol: str, strategy: str, action: str, date_str: str) -> str:
-    return f"notif:trigger:{symbol.upper()}:{strategy}:{date_str}:{action}"
+def _trigger_cache_key(symbol: str, strategy: str, action: str, date_str: str, entry_mode: str = "close") -> str:
+    return f"notif:trigger:{symbol.upper()}:{strategy}:{date_str}:{action}:{entry_mode}"
 
 
-def _sl_hit_cache_key(symbol: str, strategy: str, action: str, date_str: str) -> str:
-    return f"notif:slhit:{symbol.upper()}:{strategy}:{date_str}:{action}"
+def _sl_hit_cache_key(symbol: str, strategy: str, action: str, date_str: str, entry_mode: str = "close") -> str:
+    return f"notif:slhit:{symbol.upper()}:{strategy}:{date_str}:{action}:{entry_mode}"
 
 
 def _tradingview_link(symbol: str) -> str:
@@ -88,12 +88,13 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         if setup.triggeredAt else "—"
     )
 
-    title = f"{action_emoji} {snapshot.symbol} · {setup.action.upper()} · {strategy_label}"
+    mode_tag = " (3m Close)" if getattr(setup, "entryMode", None) == "close" else (" (LTP Break)" if getattr(setup, "entryMode", None) == "touch" else "")
+    title = f"{action_emoji} {snapshot.symbol} · {setup.action.upper()} · {strategy_label}{mode_tag}"
 
     lines = [
         # ── Header (emojis allowed here) ──────────────────────────────────
         f"{action_emoji} <b>{setup.action.upper()} — {snapshot.symbol}</b>",
-        f"Strategy  ·  <b>{strategy_label}</b>  |  {bias_label} bias",
+        f"Strategy  ·  <b>{strategy_label}{mode_tag}</b>  |  {bias_label} bias",
         "",
         # ── Price levels (plain-label rows) ──────────────────────────────
         f"LTP        ·  <b>₹{snapshot.currentPrice:,.2f}</b>",
@@ -214,8 +215,9 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
         return
 
     date_str = (setup.triggeredAt.astimezone(_IST) if setup.triggeredAt else datetime.now(_IST)).date().isoformat()
+    entry_mode = getattr(setup, "entryMode", "close") or "close"
     cache = get_cache_client()
-    cache_key = _trigger_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str)
+    cache_key = _trigger_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str, entry_mode)
     if cache.exists(cache_key):
         return
 
@@ -225,12 +227,13 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
         "title": title,
         "data": message,
-        "reference": f"trigger-{snapshot.symbol}-{setup.strategy}-{date_str}",
+        "reference": f"trigger-{snapshot.symbol}-{setup.strategy}-{entry_mode}-{date_str}",
         "metadata": {
             "source": "pivotiq-backend",
             "symbol": snapshot.symbol,
             "action": setup.action,
             "strategy": setup.strategy,
+            "entryMode": entry_mode,
         },
     }
 
@@ -285,8 +288,9 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot, user_id: Any | None = None)
         return
 
     date_str = (setup.slHitAt.astimezone(_IST) if setup.slHitAt else datetime.now(_IST)).date().isoformat()
+    entry_mode = getattr(setup, "entryMode", "close") or "close"
     cache = get_cache_client()
-    cache_key = _sl_hit_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str)
+    cache_key = _sl_hit_cache_key(snapshot.symbol, setup.strategy, setup.action, date_str, entry_mode)
     if cache.exists(cache_key):
         return
 
@@ -296,12 +300,13 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot, user_id: Any | None = None)
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
         "title": title,
         "data": message,
-        "reference": f"slhit-{snapshot.symbol}-{setup.strategy}-{date_str}",
+        "reference": f"slhit-{snapshot.symbol}-{setup.strategy}-{entry_mode}-{date_str}",
         "metadata": {
             "source": "pivotiq-backend",
             "symbol": snapshot.symbol,
             "action": setup.action,
             "strategy": setup.strategy,
+            "entryMode": entry_mode,
             "event": "sl_hit",
         },
     }

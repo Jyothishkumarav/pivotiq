@@ -174,8 +174,8 @@ class _TriggerStateCache:
         self._store: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
-    def get(self, symbol: str, today: str, strategy: str = "orb_vwap") -> dict[str, Any] | None:
-        key = f"{symbol}:{strategy}"
+    def get(self, symbol: str, today: str, strategy: str = "orb_vwap", entry_mode: str = "close") -> dict[str, Any] | None:
+        key = f"{symbol}:{strategy}:{entry_mode}"
         with self._lock:
             state = self._store.get(key)
             if state is not None and state["date"] == today:
@@ -184,7 +184,7 @@ class _TriggerStateCache:
         # Not in this process's memory — check Mongo (survives --reload
         # restarts and is shared across worker processes).
         try:
-            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy))
+            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode))
         except Exception:
             logger.exception("failed to read persisted trigger state for %s", symbol)
             return None
@@ -210,6 +210,7 @@ class _TriggerStateCache:
             "sl_wide": doc.get("slWide"),
             "confirmation": doc.get("confirmation"),
             "trigger_price": doc.get("triggerPrice"),
+            "entry_mode": doc.get("entryMode", "close"),
         }
 
     def freeze(
@@ -219,9 +220,10 @@ class _TriggerStateCache:
         triggered_at: datetime,
         action: str,
         strategy: str = "orb_vwap",
+        entry_mode: str = "close",
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        key = f"{symbol}:{strategy}"
+        key = f"{symbol}:{strategy}:{entry_mode}"
         with self._lock:
             state = self._store.get(key)
             if state is not None and state["date"] == today:
@@ -235,11 +237,12 @@ class _TriggerStateCache:
                 "symbol": symbol,
                 "date": today,
                 "strategy": strategy,
+                "entryMode": entry_mode,
                 "triggeredAt": triggered_at,
                 "action": action,
                 **(extra or {}),
             }
-            query = {"symbol": symbol, "date": today, "strategy": strategy}
+            query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode}
             _trigger_collection().update_one(
                 query,
                 {"$setOnInsert": insert_fields},
@@ -259,6 +262,7 @@ class _TriggerStateCache:
                 "sl_wide": (extra or {}).get("slWide"),
                 "confirmation": (extra or {}).get("confirmation"),
                 "trigger_price": (extra or {}).get("triggerPrice"),
+                "entry_mode": entry_mode,
             }
         )
 
@@ -266,15 +270,18 @@ class _TriggerStateCache:
             self._store[key] = state
         return state
 
-    def freeze_sl_hit(self, symbol: str, today: str, sl_hit_at: datetime, strategy: str = "orb_vwap") -> dict[str, Any] | None:
+    def freeze_sl_hit(self, symbol: str, today: str, sl_hit_at: datetime, strategy: str = "orb_vwap", entry_mode: str = "close") -> dict[str, Any] | None:
         """Locks in the stop-loss-hit timestamp exactly once per symbol/day.
 
         Uses a conditional update (`slHitAt` must not already exist) so
         concurrent pollers can't stomp on an already-recorded hit."""
         try:
-            query = {"symbol": symbol, "date": today, "strategy": strategy, "slHitAt": {"$exists": False}}
-            _trigger_collection().update_one(query, {"$set": {"slHitAt": sl_hit_at}})
-            doc = _trigger_collection().find_one({"symbol": symbol, "date": today, "strategy": strategy})
+            query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode, "slHitAt": {"$exists": False}}
+            res = _trigger_collection().update_one(query, {"$set": {"slHitAt": sl_hit_at}})
+            if res.matched_count == 0 and entry_mode == "close":
+                fallback_query = {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": {"$exists": False}, "slHitAt": {"$exists": False}}
+                _trigger_collection().update_one(fallback_query, {"$set": {"slHitAt": sl_hit_at}})
+            doc = _trigger_collection().find_one(_strategy_filter(symbol, today, strategy, entry_mode))
         except Exception:
             logger.exception("failed to persist SL-hit state for %s", symbol)
             return None
@@ -282,15 +289,22 @@ class _TriggerStateCache:
             return None
         state = self._state_from_doc(doc)
         with self._lock:
-            self._store[f"{symbol}:{strategy}"] = state
+            self._store[f"{symbol}:{strategy}:{entry_mode}"] = state
         return state
 
 
 _trigger_state = _TriggerStateCache()
 
 
-def _strategy_filter(symbol: str, today: str, strategy: str) -> dict[str, Any]:
-    return {"symbol": symbol, "date": today, "strategy": strategy}
+def _strategy_filter(symbol: str, today: str, strategy: str, entry_mode: str = "close") -> dict[str, Any]:
+    if entry_mode == "close":
+        return {
+            "symbol": symbol,
+            "date": today,
+            "strategy": strategy,
+            "$or": [{"entryMode": "close"}, {"entryMode": {"$exists": False}}],
+        }
+    return {"symbol": symbol, "date": today, "strategy": strategy, "entryMode": entry_mode}
 
 
 def get_trigger_collection():
@@ -417,7 +431,12 @@ def _build_trade_setup(
     )
 
 
-def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap") -> IntradaySnapshot | None:
+def compute_snapshot(
+    symbol: str,
+    access_token: str,
+    strategy: str = "orb_vwap",
+    entry_mode: str = "close",
+) -> IntradaySnapshot | None:
     """Fetch today's 5-min candles and reduce them to an ORB + VWAP snapshot.
 
     `strategy` selects which pluggable trade-setup logic builds the
@@ -428,7 +447,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
     the token has expired.
     """
     symbol = symbol.upper()
-    cache_key = f"{symbol}:{strategy}"
+    cache_key = f"{symbol}:{strategy}:{entry_mode}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
@@ -557,6 +576,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
             current_price=current_price,
             trigger_bar_secs=trigger_bar_secs,
             entry_cutoff_ts=entry_cutoff_ts,
+            entry_mode=entry_mode,
         )
     else:
         # Strong, well-supported gap-open locks out the opposite direction
@@ -567,7 +587,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
         elif gap_bias == "sell" and setup_trend == "up":
             setup_trend = "flat"
 
-        frozen = _trigger_state.get(symbol, today)
+        frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode)
         if frozen is not None:
             # Already triggered earlier today — keep the original action + timestamp
             # constant regardless of how the monitor bar set reshuffles on refresh.
@@ -586,7 +606,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
                     triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
             if triggered_at is not None:
-                frozen = _trigger_state.freeze(symbol, today, triggered_at, setup_trend)
+                frozen = _trigger_state.freeze(symbol, today, triggered_at, setup_trend, entry_mode=entry_mode)
                 triggered_at = frozen["triggered_at"]
                 setup_trend = frozen["action"]
 
@@ -607,7 +627,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
                     sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at)
+                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, entry_mode=entry_mode)
                 if updated is not None:
                     sl_hit_at = updated["sl_hit_at"]
 
@@ -658,10 +678,11 @@ def _compute_pluggable_setup(
     current_price: float,
     trigger_bar_secs: int,
     entry_cutoff_ts: float,
+    entry_mode: str = "close",
 ) -> TradeSetup:
     """Dispatches to a non-default strategy module, wiring its freeze/SL-hit
     state through the same shared `_trigger_state` cache (namespaced by
-    `strategy` so it never collides with `orb_vwap`'s state).
+    `strategy` and `entry_mode` so it never collides with `orb_vwap`'s state).
 
     `entry_cutoff_ts` is forwarded so every strategy blocks FRESH entries
     past 14:45 IST the same way — already-triggered setups still get their
@@ -669,7 +690,7 @@ def _compute_pluggable_setup(
     if strategy == "context_gated":
         from app.services.strategies import context_gated
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
         setup, freeze_payload = context_gated.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -687,6 +708,7 @@ def _compute_pluggable_setup(
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
+                entry_mode=entry_mode,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -702,7 +724,7 @@ def _compute_pluggable_setup(
                 monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy)
+                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
                 if updated is not None:
                     setup.slHitAt = updated["sl_hit_at"]
                     setup.status = "sl_hit"
@@ -711,7 +733,7 @@ def _compute_pluggable_setup(
     if strategy == "orb_pullback":
         from app.services.strategies import orb_pullback
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
         setup, freeze_payload = orb_pullback.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -729,6 +751,7 @@ def _compute_pluggable_setup(
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
+                entry_mode=entry_mode,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -746,7 +769,7 @@ def _compute_pluggable_setup(
                 monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy)
+                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
                 if updated is not None:
                     setup.slHitAt = updated["sl_hit_at"]
                     setup.status = "sl_hit"
@@ -755,7 +778,7 @@ def _compute_pluggable_setup(
     if strategy == "orb_pullback_support":
         from app.services.strategies import orb_pullback_support
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy)
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode)
         setup, freeze_payload = orb_pullback_support.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
@@ -767,12 +790,14 @@ def _compute_pluggable_setup(
             current_price=current_price,
             trigger_bar_secs=trigger_bar_secs,
             entry_cutoff_ts=entry_cutoff_ts,
+            entry_mode=entry_mode,
             frozen=frozen,
         )
         if frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
                 symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
                 strategy=strategy,
+                entry_mode=entry_mode,
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
@@ -791,7 +816,7 @@ def _compute_pluggable_setup(
                 monitor, frozen["action"], frozen["stop_loss"], setup.triggeredAt, trigger_bar_secs,
             )
             if sl_hit_at is not None:
-                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy)
+                updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode)
                 if updated is not None:
                     setup.slHitAt = updated["sl_hit_at"]
                     setup.status = "sl_hit"
