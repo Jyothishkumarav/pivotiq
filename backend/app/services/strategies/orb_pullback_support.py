@@ -3,8 +3,8 @@ as soon as the first supporting candle in the breakout direction forms and its
 extreme is broken, without waiting for the entire prior breakout peak to break.
 
 Design:
-  1. Breakout: same ORB swing high/low box as `orb_vwap` / `orb_pullback`.
-     First 3-min candle after 9:35 IST closing beyond the box confirms the breakout.
+  1. Breakout: 15-minute ORB swing high/low box (9:15-9:30 IST).
+     First 3-min candle after 9:30 IST closing beyond the box confirms the breakout.
   2. Pullback: wait for >= 1 opposite-colour candle (red for BUY, green for SELL).
      Collect the pullback candles and track the extreme (lowest low for BUY,
      highest high for SELL).

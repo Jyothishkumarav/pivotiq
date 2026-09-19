@@ -486,8 +486,11 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
 
     candles_3m = _parse_candles((resp_3m or {}).get("candles") or [])
 
-    # ORB is always derived from the 5-min bars — a fixed contract with the trader.
-    orb = candles_5m[:_OPENING_RANGE_CANDLES]
+    # ORB is derived from the 5-min bars:
+    # For orb_pullback_support: 3 x 5-min candles = first 15 min (9:15-9:30 IST).
+    # For other strategies: 4 x 5-min candles = first 20 min (9:15-9:35 IST).
+    orb_candle_count = 3 if strategy == "orb_pullback_support" else _OPENING_RANGE_CANDLES
+    orb = candles_5m[:orb_candle_count]
     if len(orb) == 0:
         return None
     # Skip the first 5-min candle: opening-auction spike and gap fills are noise.
@@ -497,7 +500,7 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
     orb_high = swing_high_candle["high"]
     orb_low = swing_low_candle["low"]
     orb_close = orb[-1]["close"]
-    swing_complete = len(orb) >= _OPENING_RANGE_CANDLES
+    swing_complete = len(orb) >= orb_candle_count
     swing_high_at = datetime.fromtimestamp(swing_high_candle["ts"] + 300, tz=timezone.utc)
     swing_low_at = datetime.fromtimestamp(swing_low_candle["ts"] + 300, tz=timezone.utc)
 
@@ -523,12 +526,12 @@ def compute_snapshot(symbol: str, access_token: str, strategy: str = "orb_vwap")
     else:
         trend = "flat"
 
-    # Before the ORB window closes at 9:35 IST, ORB high/low are still in flux.
+    # Before the ORB window closes (9:30 for pullback support, 9:35 for others), ORB high/low are in flux.
     setup_trend = trend if swing_complete else "flat"
 
     # Scan the finer monitor bars for the first cross beyond the ORB high/low.
-    # We only consider bars whose timestamp is at or after 9:35 (ORB close).
-    orb_close_ts = orb[-1]["ts"] + 300  # start of bar 4 + 5 min = 9:35 IST epoch
+    # For orb_pullback_support, at or after 9:30; for others, at or after 9:35.
+    orb_close_ts = orb[-1]["ts"] + 300  # start of post-ORB window epoch
     triggered_at: datetime | None = None
     trigger_bar_secs = _FINE_RESOLUTION_SECS if candles_3m else 300
     entry_cutoff_ts = _entry_cutoff_ts(today)
