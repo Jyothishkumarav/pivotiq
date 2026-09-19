@@ -584,8 +584,10 @@ def compute_snapshot(
     orb = candles_5m[:orb_candle_count]
     if len(orb) == 0:
         return None
-    # Skip the first 5-min candle: opening-auction spike and gap fills are noise.
-    swing_pool = orb[1:] if len(orb) > 1 else orb
+    # For non-default strategies (like orb_pullback_support's 15-min ORB), the opening
+    # range is defined by the absolute high and low across all opening candles (including candle 0).
+    # For legacy orb_vwap only, candle 0 was excluded as opening-auction noise.
+    swing_pool = orb if strategy != "orb_vwap" else (orb[1:] if len(orb) > 1 else orb)
     swing_high_candle = max(swing_pool, key=lambda c: c["high"])
     swing_low_candle = min(swing_pool, key=lambda c: c["low"])
     orb_high = swing_high_candle["high"]
