@@ -227,7 +227,11 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
               </>
             ) : intraday ? (
               <Text variant="caption" tone="muted" numberOfLines={1}>
-                {formatCurrency(intraday.openingRangeHigh)}
+                {formatCurrency(
+                  intraday.tradeSetup?.action === "sell"
+                    ? intraday.openingRangeLow
+                    : intraday.openingRangeHigh
+                )}
               </Text>
             ) : (
               <Text variant="mono" tone="muted">
@@ -238,7 +242,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
           <View style={{ flex: 1.45, alignItems: "flex-end", gap: 2 }}>
-            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
+            {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit" || intraday.tradeSetup.status === "pending_entry") ? (
               (() => {
                 const setup = intraday.tradeSetup;
                 const hasTrigger = setup.triggerPrice !== null;
@@ -283,7 +287,11 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
               })()
             ) : intraday ? (
               <Text variant="caption" tone="muted" numberOfLines={1}>
-                {formatCurrency(intraday.openingRangeLow)}
+                {formatCurrency(
+                  intraday.tradeSetup?.action === "sell"
+                    ? intraday.openingRangeHigh
+                    : intraday.openingRangeLow
+                )}
               </Text>
             ) : (
               <Text variant="mono" tone="muted">
@@ -389,10 +397,15 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
-                const rawGap = effectiveLtp - intraday.tradeSetup.stopLoss;
+                const governingSl =
+                  intraday.tradeSetup.slWide != null &&
+                  Math.abs(intraday.tradeSetup.slWide - intraday.tradeSetup.stopLoss) > 0.05
+                    ? intraday.tradeSetup.slWide
+                    : intraday.tradeSetup.stopLoss;
+                const rawGap = effectiveLtp - governingSl;
                 const roomToSl = intraday.tradeSetup.action === "sell" ? -rawGap : rawGap;
-                const pct = intraday.tradeSetup.stopLoss > 0
-                  ? (roomToSl / intraday.tradeSetup.stopLoss) * 100
+                const pct = governingSl > 0
+                  ? (roomToSl / governingSl) * 100
                   : 0;
                 const tone: "positive" | "negative" | "warning" =
                   pct > 0.05 ? "positive" : pct < -0.05 ? "negative" : "warning";

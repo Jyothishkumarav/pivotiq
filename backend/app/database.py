@@ -43,6 +43,10 @@ async def ensure_indexes() -> None:
     except Exception:
         pass
     try:
+        await db.intraday_triggers.drop_index("symbol_1_date_1_strategy_1")
+    except Exception:
+        pass
+    try:
         await db.intraday_triggers.drop_index("symbol_1_date_1_strategy_1_entryMode_1")
     except Exception:
         pass

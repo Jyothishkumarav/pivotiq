@@ -760,15 +760,15 @@ def compute_snapshot(
         # right up to session close (including the final 30 minutes).
         sl_hit_at: datetime | None = frozen["sl_hit_at"] if frozen is not None else None
         if sl_hit_at is None and triggered_at is not None:
-            stop_loss = orb_low if setup_trend == "buy" else orb_high
+            stop_loss = orb_low if setup_trend in ("buy", "up") else orb_high
             sl_trigger_ts = triggered_at.timestamp() - trigger_bar_secs
             for c in monitor:
                 if c["ts"] < sl_trigger_ts:
                     continue
-                if setup_trend == "buy" and c["low"] < stop_loss:
+                if setup_trend in ("buy", "up") and c["low"] < stop_loss:
                     sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
-                if setup_trend == "sell" and c["high"] > stop_loss:
+                if setup_trend in ("sell", "down") and c["high"] > stop_loss:
                     sl_hit_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
             if sl_hit_at is not None and not is_retest:
@@ -921,20 +921,36 @@ def _compute_pluggable_setup(
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
 
-        sl_hit_at = frozen.get("sl_hit_at") if frozen is not None else None
-        if sl_hit_at is None and setup.triggeredAt is not None:
+        if setup.triggeredAt is not None:
             action = frozen["action"] if frozen is not None else setup.action
-            stop_loss = frozen["stop_loss"] if frozen is not None else setup.stopLoss
-            sl_hit_at = orb_pullback.check_sl_hit(
-                monitor, action, stop_loss, setup.triggeredAt, trigger_bar_secs,
+            # Setup status (sl_hit) strictly depends on MSL (macro stop), not tight SL
+            sl_to_check = (
+                frozen.get("sl_wide")
+                if (frozen is not None and frozen.get("sl_wide") is not None)
+                else (setup.slWide if setup.slWide is not None else (frozen.get("stop_loss") if frozen is not None else setup.stopLoss))
             )
-            if sl_hit_at is not None:
+            msl_hit_at = orb_pullback.check_sl_hit(
+                monitor, action, sl_to_check, setup.triggeredAt, trigger_bar_secs,
+            )
+            if msl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, msl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
                     if updated is not None:
-                        sl_hit_at = updated["sl_hit_at"]
-                setup.slHitAt = sl_hit_at
+                        msl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = msl_hit_at
                 setup.status = "sl_hit"
+            else:
+                if frozen is not None and frozen.get("sl_hit_at") is not None:
+                    try:
+                        _trigger_collection().update_one(
+                            _strategy_filter(symbol, today, strategy, entry_mode, include_first_candle),
+                            {"$unset": {"slHitAt": ""}},
+                        )
+                        frozen["sl_hit_at"] = None
+                    except Exception:
+                        pass
+                setup.slHitAt = None
+                setup.status = "triggered"
         setup.includeFirstCandle = include_first_candle
         return setup
 
@@ -977,20 +993,37 @@ def _compute_pluggable_setup(
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
 
-        sl_hit_at = frozen.get("sl_hit_at") if frozen is not None else None
-        if sl_hit_at is None and setup.triggeredAt is not None:
+        if setup.triggeredAt is not None:
             action = frozen["action"] if frozen is not None else setup.action
-            stop_loss = frozen["stop_loss"] if frozen is not None else setup.stopLoss
-            sl_hit_at = orb_pullback_support.check_sl_hit(
-                monitor, action, stop_loss, setup.triggeredAt, trigger_bar_secs, entry_mode=entry_mode,
+            # Setup status (sl_hit) strictly depends on MSL (macro stop), not tight SL
+            sl_to_check = (
+                frozen.get("sl_wide")
+                if (frozen is not None and frozen.get("sl_wide") is not None)
+                else (setup.slWide if setup.slWide is not None else (frozen.get("stop_loss") if frozen is not None else setup.stopLoss))
             )
-            if sl_hit_at is not None:
+            msl_hit_at = orb_pullback_support.check_sl_hit(
+                monitor, action, sl_to_check, setup.triggeredAt, trigger_bar_secs, entry_mode=entry_mode,
+            )
+            if msl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, msl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
                     if updated is not None:
-                        sl_hit_at = updated["sl_hit_at"]
-                setup.slHitAt = sl_hit_at
+                        msl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = msl_hit_at
                 setup.status = "sl_hit"
+            else:
+                # MSL was never breached. If a legacy record prematurely recorded tight-SL hit, self-heal and clear it:
+                if frozen is not None and frozen.get("sl_hit_at") is not None:
+                    try:
+                        _trigger_collection().update_one(
+                            _strategy_filter(symbol, today, strategy, entry_mode, include_first_candle),
+                            {"$unset": {"slHitAt": ""}},
+                        )
+                        frozen["sl_hit_at"] = None
+                    except Exception:
+                        pass
+                setup.slHitAt = None
+                setup.status = "triggered"
         setup.includeFirstCandle = include_first_candle
         return setup
 

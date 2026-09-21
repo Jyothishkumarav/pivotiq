@@ -224,9 +224,19 @@ def compute_setup(
         action = frozen["action"]
         triggered_at = frozen["triggered_at"]
         entry = frozen["entry"]  # Breakout price (BO level)
-        stop_loss = frozen["stop_loss"]  # Structural ORB stop loss
+        stop_loss = frozen["stop_loss"]  # Tight stop loss
         trigger_price = frozen.get("trigger_price")  # Actual pullback entry price
         sl_wide = frozen.get("sl_wide") or (orb_low if action == "buy" else orb_high)
+
+        # Self-healing: if legacy record froze stop_loss identical to sl_wide, recover the tight stop from monitor candles
+        if abs(stop_loss - sl_wide) < 0.05:
+            breakout_idx = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, action)
+            if breakout_idx is not None:
+                support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
+                if support_res is not None:
+                    _, tight_stop, _, _, _ = support_res
+                    stop_loss = tight_stop
+
         status = "triggered"
         fill_level = trigger_price if trigger_price is not None else entry
         rationale = (
@@ -265,6 +275,7 @@ def compute_setup(
                 )
             else:
                 support_trigger_level, tight_stop, support_idx, hist_triggered_at, is_pullback_level = support_res
+                stop_loss = tight_stop
 
                 if hist_triggered_at is not None:
                     triggered_at = hist_triggered_at

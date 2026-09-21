@@ -223,12 +223,22 @@ function TradeSetupCard({ setup, currentPrice }: { setup: TradeSetup; currentPri
         </View>
         <View style={{ flex: 1, minWidth: 110 }}>
           <Text variant="caption" tone="muted">
-            Stop loss
+            {setup.slWide && Math.abs(setup.slWide - setup.stopLoss) > 0.05 ? "Tight Stop" : "Stop loss"}
           </Text>
           <Text variant="mono" tone="negative" style={{ fontSize: 16 }}>
             {formatCurrency(setup.stopLoss)}
           </Text>
         </View>
+        {setup.slWide && Math.abs(setup.slWide - setup.stopLoss) > 0.05 && (
+          <View style={{ flex: 1, minWidth: 110 }}>
+            <Text variant="caption" tone="muted">
+              Macro Stop (MSL)
+            </Text>
+            <Text variant="mono" tone="negative" style={{ fontSize: 16 }}>
+              {formatCurrency(setup.slWide)}
+            </Text>
+          </View>
+        )}
         <View style={{ flex: 1, minWidth: 110 }}>
           <Text variant="caption" tone="muted">
             Target (1R)
