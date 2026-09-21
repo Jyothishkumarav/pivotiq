@@ -5,9 +5,10 @@ import { Text } from "./Text";
 
 interface Props extends TextInputProps {
   label?: string;
+  rightElement?: React.ReactNode;
 }
 
-export function Input({ label, style, ...rest }: Props) {
+export function Input({ label, rightElement, style, ...rest }: Props) {
   return (
     <View style={{ gap: spacing.xs }}>
       {label ? (
@@ -15,23 +16,32 @@ export function Input({ label, style, ...rest }: Props) {
           {label}
         </Text>
       ) : null}
-      <TextInput
-        placeholderTextColor={colors.textMuted}
-        style={[
-          {
-            backgroundColor: colors.surfaceElevated,
-            borderWidth: 1,
-            borderColor: colors.border,
-            borderRadius: radius.md,
-            paddingHorizontal: spacing.md,
-            paddingVertical: spacing.md,
-            color: colors.textPrimary,
-            ...typography.body,
-          },
-          style,
-        ]}
-        {...rest}
-      />
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          backgroundColor: colors.surfaceElevated,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: radius.md,
+          paddingHorizontal: spacing.md,
+        }}
+      >
+        <TextInput
+          placeholderTextColor={colors.textMuted}
+          style={[
+            {
+              flex: 1,
+              paddingVertical: spacing.md,
+              color: colors.textPrimary,
+              ...typography.body,
+            },
+            style,
+          ]}
+          {...rest}
+        />
+        {rightElement}
+      </View>
     </View>
   );
 }

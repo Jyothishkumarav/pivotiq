@@ -24,9 +24,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (status === "loading") return;
     const inAuthGroup = segments[0] === "login";
     if (status === "unauthenticated" && !inAuthGroup) {
-      router.replace("/login");
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.location.replace("/login");
+      } else {
+        router.replace("/login");
+      }
     } else if (status === "authenticated" && inAuthGroup) {
-      router.replace("/(tabs)/search");
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.location.replace("/(tabs)/search");
+      } else {
+        router.replace("/(tabs)/search");
+      }
     }
   }, [status, segments, router]);
 

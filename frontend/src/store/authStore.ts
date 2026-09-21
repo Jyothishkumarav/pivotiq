@@ -7,6 +7,7 @@ interface AuthState {
   user: User | null;
   status: "loading" | "authenticated" | "unauthenticated";
   hydrate: () => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   loginWithDevAccount: (name: string, email: string) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -29,6 +30,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       await tokenStorage.clear();
       set({ status: "unauthenticated", user: null });
     }
+  },
+
+  login: async (username, password) => {
+    const result = await authApi.login(username, password);
+    await tokenStorage.setTokens(result.accessToken, result.refreshToken);
+    set({ status: "authenticated", user: result.user });
   },
 
   loginWithDevAccount: async (name, email) => {

@@ -64,7 +64,10 @@ function buildUrl(path: string, query?: RequestOptions["query"]): string {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, query, auth = true } = options;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
 
   if (auth) {
     const token = await tokenStorage.getAccessToken();

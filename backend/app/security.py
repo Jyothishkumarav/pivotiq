@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -6,6 +8,16 @@ from jose import JWTError, jwt
 from app.config import get_settings
 
 TokenType = Literal["access", "refresh"]
+
+_SALT = "pivotiq_secure_salt_2026"
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(f"{_SALT}:{password}".encode("utf-8")).hexdigest()
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return hmac.compare_digest(hash_password(plain_password), hashed_password)
 
 
 def _create_token(subject: str, token_type: TokenType, expires_delta: timedelta, extra_claims: dict[str, Any] | None = None) -> str:

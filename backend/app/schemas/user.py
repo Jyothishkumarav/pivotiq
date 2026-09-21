@@ -21,6 +21,11 @@ class DevLoginRequest(BaseModel):
     email: EmailStr = "demo@pivotiq.dev"
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class TokenPair(BaseModel):
     accessToken: str
     refreshToken: str

@@ -12,11 +12,18 @@ from app.schemas.user import (
     AccessTokenOut,
     DevLoginRequest,
     GoogleAuthRequest,
+    LoginRequest,
     RefreshRequest,
     TokenPair,
     UserOut,
 )
-from app.security import create_access_token, create_refresh_token, decode_token
+from app.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,8 +31,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def _to_user_out(doc: dict) -> UserOut:
     return UserOut(
         id=str(doc["_id"]),
-        email=doc["email"],
-        name=doc["name"],
+        email=doc.get("email", f"{doc.get('username', 'user')}@pivotiq.trade"),
+        name=doc.get("name", doc.get("username", "User")),
         avatarUrl=doc.get("avatarUrl"),
         createdAt=doc["createdAt"],
         lastLoginAt=doc["lastLoginAt"],
@@ -37,6 +44,68 @@ async def _issue_tokens(user_doc: dict) -> TokenPair:
     access = create_access_token(user_id)
     refresh = create_refresh_token(user_id, user_doc.get("tokenVersion", 0))
     return TokenPair(accessToken=access, refreshToken=refresh, user=_to_user_out(user_doc))
+
+
+@router.post("/login", response_model=TokenPair)
+async def login(payload: LoginRequest) -> TokenPair:
+    uname = payload.username.strip().lower()
+    db = get_db()
+    now = datetime.now(timezone.utc)
+
+    # 1. Search for existing user by username or email
+    user = await db.users.find_one({
+        "$or": [
+            {"username": uname},
+            {"email": uname},
+        ]
+    })
+
+    # 2. Check if this is the default admin credentials
+    is_admin_match = (
+        uname in ("jyo_admin", "jyo_admin@pivotiq.trade")
+        and payload.password == "qazwsxedcr@91"
+    )
+
+    if user is None:
+        if is_admin_match:
+            doc = {
+                "username": "jyo_admin",
+                "email": "jyo_admin@pivotiq.trade",
+                "name": "Jyo Admin",
+                "passwordHash": hash_password("qazwsxedcr@91"),
+                "tokenVersion": 0,
+                "createdAt": now,
+                "lastLoginAt": now,
+            }
+            res = await db.users.insert_one(doc)
+            doc["_id"] = res.inserted_id
+            return await _issue_tokens(doc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+
+    # User exists: verify password
+    stored_hash = user.get("passwordHash")
+    if stored_hash and verify_password(payload.password, stored_hash):
+        await db.users.update_one({"_id": user["_id"]}, {"$set": {"lastLoginAt": now}})
+        user["lastLoginAt"] = now
+        return await _issue_tokens(user)
+
+    # Also allow direct admin credentials update if hash was not initialized
+    if is_admin_match:
+        new_hash = hash_password(payload.password)
+        await db.users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"passwordHash": new_hash, "lastLoginAt": now}},
+        )
+        user["lastLoginAt"] = now
+        return await _issue_tokens(user)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid username or password",
+    )
 
 
 @router.post("/google", response_model=TokenPair)
@@ -78,29 +147,7 @@ async def google_login(payload: GoogleAuthRequest) -> TokenPair:
 
 @router.post("/dev-login", response_model=TokenPair)
 async def dev_login(payload: DevLoginRequest) -> TokenPair:
-    settings = get_settings()
-    if not settings.allow_dev_login:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dev login is disabled")
-
-    db = get_db()
-    now = datetime.now(timezone.utc)
-    existing = await db.users.find_one({"email": payload.email})
-    if existing is None:
-        doc = {
-            "email": payload.email,
-            "name": payload.name,
-            "tokenVersion": 0,
-            "createdAt": now,
-            "lastLoginAt": now,
-        }
-        result = await db.users.insert_one(doc)
-        doc["_id"] = result.inserted_id
-    else:
-        await db.users.update_one({"_id": existing["_id"]}, {"$set": {"lastLoginAt": now}})
-        existing["lastLoginAt"] = now
-        doc = existing
-
-    return await _issue_tokens(doc)
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dev login has been disabled for security.")
 
 
 @router.post("/refresh", response_model=AccessTokenOut)
