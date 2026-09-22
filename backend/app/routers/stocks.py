@@ -19,7 +19,11 @@ from app.schemas.stock import (
 from app.services import intraday_analysis, market_data, strategies, support_levels
 from app.services.fyers_client import FyersTokenExpired
 from app.services.market_context import get_active_fyers_token
-from app.services.notification_client import notify_stop_loss_hit, notify_trade_setup_triggered
+from app.services.notification_client import (
+    clear_notification_cache,
+    notify_stop_loss_hit,
+    notify_trade_setup_triggered,
+)
 
 router = APIRouter(prefix="/stocks", tags=["stocks"], dependencies=[Depends(with_fyers_context)])
 
@@ -217,6 +221,13 @@ async def clear_intraday_triggers(
     # Also wipe the per-symbol snapshot cache so the refreshed data
     # is fetched fresh on the very next poll.
     intraday_analysis.invalidate_snapshot_cache(
+        strategy=payload.strategy,
+        symbols=payload.symbols,
+    )
+
+    # Wipe notification deduplication cache from Redis so alerts can re-fire
+    await asyncio.to_thread(
+        clear_notification_cache,
         strategy=payload.strategy,
         symbols=payload.symbols,
     )

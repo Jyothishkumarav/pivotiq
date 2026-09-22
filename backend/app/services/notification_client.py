@@ -465,3 +465,22 @@ def notify_stop_loss_hit(
         },
         ttl_seconds=_TRIGGER_CACHE_TTL_SECONDS,
     )
+
+
+def clear_notification_cache(
+    *,
+    strategy: str | None = None,
+    symbols: list[str] | None = None,
+) -> int:
+    """Evict notification deduplication keys from Redis so triggers/SL-hits can re-fire.
+    Used when triggers are reset in the UI or on strategy changes."""
+    cache = get_cache_client()
+    strat_pat = strategy if strategy else "*"
+    deleted = 0
+    if symbols:
+        for sym in symbols:
+            deleted += cache.delete_pattern(f"notif:*:{sym.upper()}:{strat_pat}:*")
+    else:
+        deleted += cache.delete_pattern(f"notif:*:*:{strat_pat}:*")
+    return deleted
+

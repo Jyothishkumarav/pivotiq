@@ -97,6 +97,35 @@ class CacheClient:
                 logger.exception("cache: Redis EXISTS failed for key=%s, falling back", key)
         return self._fallback.exists(key)
 
+    def delete(self, key: str) -> None:
+        if self._redis is not None:
+            try:
+                self._redis.delete(key)
+                return
+            except Exception:
+                logger.exception("cache: Redis DELETE failed for key=%s, falling back", key)
+        with self._fallback._lock:
+            self._fallback._data.pop(key, None)
+
+    def delete_pattern(self, pattern: str) -> int:
+        count = 0
+        if self._redis is not None:
+            try:
+                keys = self._redis.keys(pattern)
+                if keys:
+                    count = self._redis.delete(*keys)
+                return count
+            except Exception:
+                logger.exception("cache: Redis DELETE_PATTERN failed for pattern=%s, falling back", pattern)
+        import fnmatch
+        with self._fallback._lock:
+            matching = [k for k in self._fallback._data.keys() if fnmatch.fnmatch(k, pattern)]
+            for k in matching:
+                self._fallback._data.pop(k, None)
+                count += 1
+        return count
+
+
 
 _client: CacheClient | None = None
 _client_lock = threading.Lock()
