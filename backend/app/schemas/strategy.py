@@ -3,24 +3,25 @@ from pydantic import BaseModel
 
 
 class StrategyName(str, Enum):
-    ORB_VWAP = "orb_vwap"
-    CONTEXT_GATED = "context_gated"
-    ORB_PULLBACK = "orb_pullback"
+    ORB_FLOW = "orb_flow"
     ORB_PULLBACK_SUPPORT = "orb_pullback_support"
+    ORB_PULLBACK = "orb_pullback"
 
 
 STRATEGY_DISPLAY_NAMES: dict[str, str] = {
-    StrategyName.ORB_VWAP.value: "ORB + VWAP (default)",
-    StrategyName.CONTEXT_GATED.value: "Context-gated (gap/trend/HL-BOS)",
-    StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
+    StrategyName.ORB_FLOW.value: "ORB Institutional Flow",
     StrategyName.ORB_PULLBACK_SUPPORT.value: "ORB + Pullback Support",
+    StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
+    "orb_vwap": "ORB + VWAP",
+    "context_gated": "Context-gated",
 }
 
 STRATEGY_SHORT_NAMES: dict[str, str] = {
-    StrategyName.ORB_VWAP.value: "ORB + VWAP",
-    StrategyName.CONTEXT_GATED.value: "Context-gated",
-    StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
+    StrategyName.ORB_FLOW.value: "Institutional Flow",
     StrategyName.ORB_PULLBACK_SUPPORT.value: "ORB + Pullback Support",
+    StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
+    "orb_vwap": "ORB + VWAP",
+    "context_gated": "Context-gated",
 }
 
 

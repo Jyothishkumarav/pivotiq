@@ -583,6 +583,56 @@ def _build_trade_setup(
     )
 
 
+def _attach_max_favorable_excursion(
+    setup: TradeSetup,
+    monitor: list[dict],
+    entry_mode: str = "close",
+) -> None:
+    """Calculates Maximum Favorable Excursion (MFE): peak profit gained after trigger."""
+    if setup.triggeredAt is None:
+        return
+    trig_ts = setup.triggeredAt.timestamp()
+    trade_entry = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    if not trade_entry or trade_entry <= 0:
+        return
+
+    post_candles = [
+        c for c in monitor
+        if (c["ts"] > trig_ts if entry_mode == "close" else c["ts"] >= trig_ts)
+    ]
+    if not post_candles:
+        setup.maxFavorablePrice = round(trade_entry, 2)
+        setup.maxFavorableDelta = 0.0
+        setup.maxFavorablePercent = 0.0
+        setup.maxFavorableR = 0.0
+        setup.maxFavorableTime = setup.triggeredAt.astimezone(IST).strftime("%H:%M")
+        return
+
+    tight_sl = setup.stopLoss
+    risk = abs(trade_entry - tight_sl) if tight_sl else 0.0
+
+    if setup.action == "buy":
+        best_c = max(post_candles, key=lambda c: c["high"])
+        peak_price = best_c["high"]
+        peak_delta = max(0.0, peak_price - trade_entry)
+        peak_ts = best_c["ts"]
+    else:
+        best_c = min(post_candles, key=lambda c: c["low"])
+        peak_price = best_c["low"]
+        peak_delta = max(0.0, trade_entry - peak_price)
+        peak_ts = best_c["ts"]
+
+    peak_pct = round((peak_delta / trade_entry) * 100, 2)
+    peak_r = round(peak_delta / risk, 2) if risk > 0 else 0.0
+    peak_time_str = datetime.fromtimestamp(peak_ts, tz=timezone.utc).astimezone(IST).strftime("%H:%M")
+
+    setup.maxFavorablePrice = round(peak_price, 2)
+    setup.maxFavorableDelta = round(peak_delta, 2)
+    setup.maxFavorablePercent = peak_pct
+    setup.maxFavorableR = peak_r
+    setup.maxFavorableTime = peak_time_str
+
+
 def compute_snapshot(
     symbol: str,
     access_token: str,
@@ -840,6 +890,9 @@ def compute_snapshot(
             lean=gap_bias,
         )
 
+    if trade_setup is not None and trade_setup.triggeredAt is not None:
+        _attach_max_favorable_excursion(trade_setup, monitor, entry_mode=entry_mode)
+
     snapshot = IntradaySnapshot(
         symbol=symbol,
         currentPrice=round(current_price, 2),
@@ -1068,6 +1121,85 @@ def _compute_pluggable_setup(
                 setup.status = "sl_hit"
             else:
                 # MSL was never breached. If a legacy record prematurely recorded tight-SL hit, self-heal and clear it:
+                if frozen is not None and frozen.get("sl_hit_at") is not None:
+                    try:
+                        _trigger_collection().update_one(
+                            _strategy_filter(symbol, today, strategy, entry_mode, include_first_candle),
+                            {"$unset": {"slHitAt": ""}},
+                        )
+                        frozen["sl_hit_at"] = None
+                    except Exception:
+                        pass
+                setup.slHitAt = None
+                setup.status = "triggered"
+        setup.includeFirstCandle = include_first_candle
+        return setup
+
+    if strategy == "orb_flow":
+        from app.services.strategies import orb_flow
+
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle) if not is_retest else None
+        idx_snaps = get_cached_index_snapshots(strategy=strategy, entry_mode=entry_mode) if not is_retest else None
+        setup, freeze_payload = orb_flow.compute_setup(
+            symbol=symbol,
+            candles_5m=candles_5m,
+            monitor=monitor,
+            orb_high=orb_high,
+            orb_low=orb_low,
+            orb_close_ts=orb_close_ts,
+            vwap=vwap,
+            current_price=current_price,
+            trigger_bar_secs=trigger_bar_secs,
+            entry_cutoff_ts=entry_cutoff_ts,
+            entry_mode=entry_mode,
+            frozen=frozen,
+            setup_trend=setup_trend,
+            gap_bias=gap_bias,
+            index_snapshots=idx_snaps,
+        )
+        if not is_retest and frozen is None and freeze_payload is not None:
+            frozen = _trigger_state.freeze(
+                symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
+                strategy=strategy,
+                entry_mode=entry_mode,
+                include_first_candle=include_first_candle,
+                extra={
+                    "entry": freeze_payload["entry"],
+                    "stopLoss": freeze_payload["stop_loss"],
+                    "triggerPrice": freeze_payload["trigger_price"],
+                    "slWide": freeze_payload.get("sl_wide"),
+                    "indexConfluence": freeze_payload.get("index_confluence"),
+                    "sizingMultiplier": freeze_payload.get("sizing_multiplier"),
+                },
+            )
+            setup.triggeredAt = frozen["triggered_at"]
+            setup.status = "triggered"
+            setup.triggerPrice = frozen.get("trigger_price")
+            setup.indexConfluence = frozen.get("index_confluence", setup.indexConfluence)
+            setup.sizingMultiplier = frozen.get("sizing_multiplier", setup.sizingMultiplier)
+        elif frozen is not None:
+            setup.triggerPrice = frozen.get("trigger_price")
+            setup.indexConfluence = frozen.get("index_confluence", setup.indexConfluence)
+            setup.sizingMultiplier = frozen.get("sizing_multiplier", setup.sizingMultiplier)
+
+        if setup.triggeredAt is not None:
+            action = frozen["action"] if frozen is not None else setup.action
+            sl_to_check = (
+                frozen.get("sl_wide")
+                if (frozen is not None and frozen.get("sl_wide") is not None)
+                else (setup.slWide if setup.slWide is not None else (frozen.get("stop_loss") if frozen is not None else setup.stopLoss))
+            )
+            msl_hit_at = orb_flow.check_sl_hit(
+                monitor, action, sl_to_check, setup.triggeredAt, trigger_bar_secs, entry_mode=entry_mode,
+            )
+            if msl_hit_at is not None:
+                if not is_retest:
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, msl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
+                    if updated is not None:
+                        msl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = msl_hit_at
+                setup.status = "sl_hit"
+            else:
                 if frozen is not None and frozen.get("sl_hit_at") is not None:
                     try:
                         _trigger_collection().update_one(

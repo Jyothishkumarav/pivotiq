@@ -15,6 +15,7 @@ const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   context_gated: "Filters breakouts using market gap bias, trend, and HL-BOS structure.",
   orb_pullback: "Waits for pullback to complete, enters on break of pullback high/low.",
   orb_pullback_support: "Early entry on break of the first supporting reversal candle.",
+  orb_flow: "Morning window breakout with 3m close confirmation and index confluence position sizing.",
 };
 
 const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
@@ -22,6 +23,7 @@ const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
   context_gated: { glyph: "🛡️", color: "#9AA9C7" },
   orb_pullback: { glyph: "🔄", color: "#F5B54A" },
   orb_pullback_support: { glyph: "🎯", color: "#3DDB9F" },
+  orb_flow: { glyph: "⚡", color: "#7B61FF" },
 };
 
 export function StrategyAlertsModal({ visible, onClose }: Props) {
@@ -60,7 +62,8 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
     },
   });
 
-  const strategies = data?.strategies ?? [];
+  const HIDDEN_STRATEGIES = ["orb_vwap", "context_gated"];
+  const strategies = (data?.strategies ?? []).filter((s) => !HIDDEN_STRATEGIES.includes(s.key));
   const enabledCount = strategies.filter((s) => s.enabled).length;
 
   return (

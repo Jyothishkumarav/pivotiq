@@ -33,8 +33,7 @@ class Settings(BaseSettings):
     notification_service_enabled: bool = False
     notification_channels: list[str] = ["telegram"]
     notification_telegram_chat_id: str = ""
-    # Testing gate: only these strategies fire notifications; others are muted regardless of trigger state.
-    notification_enabled_strategies: list[str] = ["orb_vwap"]
+    notification_enabled_strategies: list[str] = ["orb_flow", "orb_pullback_support", "orb_pullback"]
 
 
 @lru_cache

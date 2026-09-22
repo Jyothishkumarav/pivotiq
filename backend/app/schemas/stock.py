@@ -98,6 +98,13 @@ class TradeSetup(BaseModel):
     triggerPrice: float | None = None
     entryMode: Literal["touch", "close"] | None = None
     includeFirstCandle: bool | None = None
+    indexConfluence: Literal["aligned", "relative_strength", "neutral"] | None = None
+    sizingMultiplier: float | None = None
+    maxFavorablePrice: float | None = None
+    maxFavorableDelta: float | None = None
+    maxFavorablePercent: float | None = None
+    maxFavorableR: float | None = None
+    maxFavorableTime: str | None = None
 
 
 class IntradaySnapshot(BaseModel):

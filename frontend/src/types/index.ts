@@ -186,6 +186,13 @@ export interface TradeSetup {
   triggerPrice: number | null;
   entryMode?: "touch" | "close" | null;
   includeFirstCandle?: boolean | null;
+  indexConfluence?: "aligned" | "relative_strength" | "neutral" | null;
+  sizingMultiplier?: number | null;
+  maxFavorablePrice?: number | null;
+  maxFavorableDelta?: number | null;
+  maxFavorablePercent?: number | null;
+  maxFavorableR?: number | null;
+  maxFavorableTime?: string | null;
 }
 
 export interface IntradaySnapshot {

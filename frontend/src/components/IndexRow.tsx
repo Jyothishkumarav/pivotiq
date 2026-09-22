@@ -102,27 +102,13 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
             marginBottom: 3,
           }}
         >
-          {/* Symbol + INDEX badge + intraday subtext */}
-          <View style={{ flex: isDesktop ? 1.4 : 1.2, gap: 2 }}>
+          {/* Symbol + intraday subtext */}
+          <View style={{ flex: 1.4, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle" style={{ fontWeight: "700", letterSpacing: 0.2 }}>
                 {name}
               </Text>
-              <View
-                style={{
-                  paddingHorizontal: 5,
-                  paddingVertical: 1,
-                  borderRadius: 4,
-                  backgroundColor: `${accentColor}20`,
-                  borderWidth: 1,
-                  borderColor: `${accentColor}55`,
-                }}
-              >
-                <Text style={{ color: accentColor, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 }}>
-                  INDEX
-                </Text>
-              </View>
             </View>
             <Text variant="caption" tone="muted" numberOfLines={1}>
               {intraday
@@ -397,8 +383,15 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
             )}
           </View>
 
+          {/* Max Run column */}
+          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+            <Text variant="mono" tone="muted">
+              —
+            </Text>
+          </View>
+
           {/* Time column */}
-          <View style={{ flex: 0.6, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.65, alignItems: "flex-end" }}>
             {intraday?.tradeSetup?.triggeredAt ? (
               <Text variant="caption" tone="positive">
                 {formatIstTime(intraday.tradeSetup.triggeredAt)}

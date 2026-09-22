@@ -45,7 +45,8 @@ const COLUMN_HEADERS: {
   { key: "symbol", label: "Status", flex: 0.65, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ Entry", flex: 0.7, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ SL", flex: 0.7, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Time", flex: 0.6, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Max Run", flex: 0.75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Time", flex: 0.65, align: "flex-end", sortable: false },
   { key: "support", label: "Support", flex: 0.85, align: "flex-end", sortable: true },
 ];
 
@@ -77,13 +78,13 @@ const INTRADAY_LEGEND: { glyph: string; color: string; label: string }[] = [
 ];
 
 const STRATEGY_OPTIONS: { value: string; label: string; icon: string; shortLabel: string }[] = [
-  { value: "orb_vwap",            label: "ORB + VWAP",           icon: "⚡", shortLabel: "ORB + VWAP" },
-  { value: "context_gated",       label: "Context-gated",         icon: "🛡️", shortLabel: "Context" },
-  { value: "orb_pullback",        label: "ORB + VWAP Pullback",   icon: "🔄", shortLabel: "Pullback" },
+  { value: "orb_flow",            label: "ORB Institutional Flow", icon: "⚡", shortLabel: "Flow" },
   { value: "orb_pullback_support",label: "ORB + Pullback Support",icon: "🎯", shortLabel: "Support" },
+  { value: "orb_pullback",        label: "ORB + VWAP Pullback",   icon: "🔄", shortLabel: "Pullback" },
 ];
 
 const STRATEGY_COLORS: Record<string, { accent: string; glow: string; bg: string }> = {
+  orb_flow:             { accent: "#7B61FF",        glow: "rgba(123,97,255,0.25)",  bg: "rgba(123,97,255,0.10)" },
   orb_vwap:             { accent: colors.accent,   glow: "rgba(91,139,255,0.25)",  bg: "rgba(91,139,255,0.10)" },
   context_gated:        { accent: "#9AA9C7",        glow: "rgba(154,169,199,0.20)", bg: "rgba(154,169,199,0.08)" },
   orb_pullback:         { accent: "#F5B54A",        glow: "rgba(245,181,74,0.22)",  bg: "rgba(245,181,74,0.09)" },
@@ -715,7 +716,9 @@ export default function WatchlistDetailScreen() {
     queryKey: ["strategy-notifications"],
     queryFn: settingsApi.getStrategyNotifications,
   });
-  const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
+  const HIDDEN_STRATEGIES = ["orb_vwap", "context_gated"];
+  const activeAlertsCount =
+    strategyNotifs?.strategies.filter((s) => !HIDDEN_STRATEGIES.includes(s.key) && s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
     queryKey: ["intraday", allSymbolsKey, strategy, entryMode, includeFirstCandle, retestDate],
     queryFn: () => stocksApi.intradaySnapshots(allSymbols, strategy, entryMode, retestDate, includeFirstCandle),
@@ -849,6 +852,30 @@ export default function WatchlistDetailScreen() {
               includeFirstCandle={includeFirstCandle}
               onIncludeFirstCandleChange={handleIncludeFirstCandleChange}
             />
+          )}
+          {strategy === "orb_flow" && (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.sm,
+                paddingHorizontal: spacing.md,
+                paddingVertical: 7,
+                borderRadius: 8,
+                backgroundColor: "rgba(123,97,255,0.08)",
+                borderWidth: 1,
+                borderColor: "rgba(123,97,255,0.22)",
+                marginTop: 4,
+              }}
+            >
+              <Text style={{ fontSize: 13 }}>⚡</Text>
+              <Text variant="caption" style={{ color: "#B8A7FF", fontWeight: "700" }}>
+                Institutional Flow:
+              </Text>
+              <Text variant="caption" tone="secondary">
+                3m Close Confirmation · Morning Window (≤ 10:30 IST) · Dynamic Confluence Sizing (1.0R / 0.5R)
+              </Text>
+            </View>
           )}
           <DateSelector
             value={retestDate}

@@ -211,6 +211,12 @@ def _format_message(
         f"VWAP Bias     ·  {vwap_pos_label}",
     ])
 
+    if getattr(setup, "indexConfluence", None):
+        conf_label = setup.indexConfluence.replace("_", " ").upper()
+        conf_emoji = "🎯" if setup.indexConfluence == "aligned" else ("🛡️" if setup.indexConfluence == "relative_strength" else "⚪")
+        mult = getattr(setup, "sizingMultiplier", 1.0) or 1.0
+        lines.append(f"Index Confl   ·  {conf_emoji} <b>{conf_label}</b> ({mult}R Sizing)")
+
     if has_wide_sl and setup.slWide:
         lines.append(f"MSL from LTP  ·  ₹{ltp_msl:,.2f}  ({ltp_msl_p:.2f}%)")
 

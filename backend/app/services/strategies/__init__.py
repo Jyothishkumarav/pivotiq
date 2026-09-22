@@ -12,7 +12,7 @@ DEFAULT_STRATEGY = "orb_vwap"
 # "orb_vwap" is handled inline in intraday_analysis.py (the original,
 # unmodified logic) — it's not a module here to guarantee zero behavior
 # change for existing callers. Anything else must be a real module below.
-STRATEGY_NAMES = ("orb_vwap", "context_gated", "orb_pullback", "orb_pullback_support")
+STRATEGY_NAMES = ("orb_vwap", "context_gated", "orb_pullback", "orb_pullback_support", "orb_flow")
 
 
 def is_valid_strategy(name: str) -> bool:

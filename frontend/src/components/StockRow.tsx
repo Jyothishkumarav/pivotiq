@@ -129,7 +129,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           }}
         >
           {/* Symbol + intraday badge */}
-          <View style={{ flex: isDesktop ? 1.4 : 1.2, gap: 2 }}>
+          <View style={{ flex: 1.4, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle">{item.symbol}</Text>
@@ -428,12 +428,40 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
             )}
           </View>
 
-          {/* Time column: when the entry level was actually crossed */}
-          <View style={{ flex: 0.6, alignItems: "flex-end" }}>
-            {intraday?.tradeSetup?.triggeredAt ? (
-              <Text variant="caption" tone="positive">
-                {formatIstTime(intraday.tradeSetup.triggeredAt)}
+          {/* Max Run column: peak profit gained after trigger (₹ + %) */}
+          <View style={{ flex: 0.75, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup &&
+            (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
+            intraday.tradeSetup.maxFavorableDelta !== undefined &&
+            intraday.tradeSetup.maxFavorableDelta !== null ? (
+              <>
+                <Text variant="mono" tone="positive">
+                  +{formatCurrency(intraday.tradeSetup.maxFavorableDelta)}
+                </Text>
+                <Text variant="caption" tone="positive" numberOfLines={1}>
+                  {formatPercent(intraday.tradeSetup.maxFavorablePercent ?? 0)}
+                </Text>
+              </>
+            ) : (
+              <Text variant="mono" tone="muted">
+                —
               </Text>
+            )}
+          </View>
+
+          {/* Time column: trigger time on line 1, peak profit time on line 2 */}
+          <View style={{ flex: 0.65, alignItems: "flex-end", gap: 2 }}>
+            {intraday?.tradeSetup?.triggeredAt ? (
+              <>
+                <Text variant="caption" tone="positive" numberOfLines={1}>
+                  {formatIstTime(intraday.tradeSetup.triggeredAt)}
+                </Text>
+                {intraday.tradeSetup.maxFavorableTime ? (
+                  <Text variant="caption" tone="muted" numberOfLines={1} style={{ fontSize: 10 }}>
+                    @{intraday.tradeSetup.maxFavorableTime}
+                  </Text>
+                ) : null}
+              </>
             ) : (
               <Text variant="mono" tone="muted">
                 —
@@ -452,7 +480,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
                 <Text variant="mono">{formatPercent(item.distanceToSupportPercent)}</Text>
                 {item.nearestSupport !== null ? (
                   <Text variant="caption" tone="muted">
-                    from {formatCurrency(item.nearestSupport)}
+                    {formatCurrency(item.nearestSupport)}
                   </Text>
                 ) : null}
               </View>

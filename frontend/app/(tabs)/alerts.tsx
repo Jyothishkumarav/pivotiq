@@ -29,6 +29,11 @@ const STRATEGY_META: Record<string, { glyph: string; color: string; desc: string
     color: "#3DDB9F",
     desc: "Early entry on break of first reversal candle after pullback completes.",
   },
+  orb_flow: {
+    glyph: "⚡",
+    color: "#7B61FF",
+    desc: "Morning window breakout with 3m close confirmation and index confluence position sizing.",
+  },
 };
 
 export default function AlertsScreen() {
@@ -87,7 +92,8 @@ export default function AlertsScreen() {
     },
   });
 
-  const strategies = strategyData?.strategies ?? [];
+  const HIDDEN_STRATEGIES = ["orb_vwap", "context_gated"];
+  const strategies = (strategyData?.strategies ?? []).filter((s) => !HIDDEN_STRATEGIES.includes(s.key));
   const enabledCount = strategies.filter((s) => s.enabled).length;
 
   return (
