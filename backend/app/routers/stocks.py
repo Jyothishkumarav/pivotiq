@@ -166,10 +166,16 @@ async def batch_intraday_snapshots(
     user_id = current_user["_id"]
     results = await asyncio.gather(*[_one(s) for s in payload.symbols[:50]])
     if not retest_date:
-        for _, snap in results:
+        index_snaps = {
+            sym: snap for sym, snap in results
+            if snap is not None and sym in ("NIFTY50", "BANKNIFTY", "NIFTY 50", "BANK NIFTY")
+        }
+        for sym, snap in results:
             if snap is not None:
-                asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id))
-                asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id))
+                if sym in ("NIFTY50", "BANKNIFTY", "NIFTY 50", "BANK NIFTY"):
+                    continue
+                asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id, index_snaps))
+                asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id, index_snaps))
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),

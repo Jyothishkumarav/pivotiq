@@ -58,7 +58,60 @@ def get_user_enabled_strategies(user_id: Any | None = None) -> set[str]:
     return set(settings.notification_enabled_strategies)
 
 
-def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
+def _format_index_line(name: str, snap: IntradaySnapshot) -> str:
+    setup = snap.tradeSetup
+    ltp_str = f"₹{snap.currentPrice:,.2f}"
+    chg_str = f" ({snap.changePercent:+.2f}%)" if snap.changePercent is not None else ""
+
+    if setup is None:
+        return f"• <b>{name}</b>  ·  LTP {ltp_str}{chg_str}"
+
+    if setup.status == "triggered":
+        action_emoji = "🟢" if setup.action == "buy" else "🔴"
+        bo_level = setup.entry
+        trig_time = setup.triggeredAt.astimezone(_IST).strftime("%H:%M") if setup.triggeredAt else ""
+        time_part = f" at {trig_time}" if trig_time else ""
+        return f"• <b>{name}</b>  ·  {action_emoji} <b>{setup.action.upper()} Breakout</b> at <code>₹{bo_level:,.2f}</code>{time_part}  |  LTP {ltp_str}{chg_str}"
+
+    if setup.status == "pending_entry":
+        bo_level = setup.entry
+        return f"• <b>{name}</b>  ·  🟡 Broke <code>₹{bo_level:,.2f}</code> · Pullback pending  |  LTP {ltp_str}{chg_str}"
+
+    if setup.status == "sl_hit":
+        return f"• <b>{name}</b>  ·  🛑 {setup.action.upper()} SL Hit  |  LTP {ltp_str}{chg_str}"
+
+    orb_h = snap.openingRangeHigh
+    orb_l = snap.openingRangeLow
+    if orb_h and orb_l:
+        return f"• <b>{name}</b>  ·  ⚪ Inside ORB (₹{orb_l:,.2f}–₹{orb_h:,.2f}) · Waiting  |  LTP {ltp_str}{chg_str}"
+    return f"• <b>{name}</b>  ·  ⚪ Range forming · Waiting  |  LTP {ltp_str}{chg_str}"
+
+
+def _format_index_section(index_snapshots: dict[str, IntradaySnapshot] | None) -> list[str]:
+    if not index_snapshots:
+        return []
+
+    nifty_snap = index_snapshots.get("NIFTY 50") or index_snapshots.get("NIFTY50")
+    banknifty_snap = index_snapshots.get("BANK NIFTY") or index_snapshots.get("BANKNIFTY")
+
+    if nifty_snap is None and banknifty_snap is None:
+        return []
+
+    lines = [
+        "📊 <b>Index Setups & Breakouts</b>",
+    ]
+    if nifty_snap is not None:
+        lines.append(_format_index_line("NIFTY 50", nifty_snap))
+    if banknifty_snap is not None:
+        lines.append(_format_index_line("BANK NIFTY", banknifty_snap))
+    lines.append("")
+    return lines
+
+
+def _format_message(
+    snapshot: IntradaySnapshot,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> tuple[str, str]:
     """Telegram-HTML alert. Emojis only in headers to avoid line-height inflation on data rows."""
     setup = snapshot.tradeSetup
     strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
@@ -120,11 +173,14 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     if has_wide_sl and setup.slWide:
         lines.append(f"MSL from LTP  ·  ₹{ltp_msl:,.2f}  ({ltp_msl_p:.2f}%)")
 
+    index_lines = _format_index_section(index_snapshots)
+
     lines.extend([
         "",
         # ── Timing ────────────────────────────────────────────────────────
         f"Triggered  ·  <b>{triggered_at}</b>",
         "",
+        *index_lines,
         # ── Footer (emoji ok, single line) ───────────────────────────────
         f"🔗 {_tradingview_link(snapshot.symbol)}",
     ])
@@ -133,7 +189,10 @@ def _format_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     return title, body
 
 
-def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
+def _format_sl_hit_message(
+    snapshot: IntradaySnapshot,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> tuple[str, str]:
     """Telegram-HTML SL-hit alert. Emojis only in headers to avoid line-height inflation."""
     setup = snapshot.tradeSetup
     strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
@@ -181,6 +240,8 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     if has_wide_sl and setup.slWide:
         lines.append(f"Main Stop  ·  <code>₹{setup.slWide:,.2f}</code>  <i>(MΔ₹{wide_diff:,.2f} / −{wide_diff_p:.2f}%)</i>")
 
+    index_lines = _format_index_section(index_snapshots)
+
     lines.extend([
         f"Exit       ·  <b>₹{snapshot.currentPrice:,.2f}</b>  <i>({pnl_sign}₹{pnl_abs:,.2f} / {pnl_sign}{pnl_pct:.2f}%)</i>",
         "",
@@ -188,6 +249,7 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
         f"Entered   ·  {triggered_at}",
         f"SL hit    ·  <b>{sl_hit_at}</b>",
         "",
+        *index_lines,
         # ── Result (emoji ok, single line) ───────────────────────────────
         f"❌ <b>Trade closed at stop-loss. Max loss realised.</b>",
         "",
@@ -199,7 +261,11 @@ def _format_sl_hit_message(snapshot: IntradaySnapshot) -> tuple[str, str]:
     return title, body
 
 
-def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None = None) -> None:
+def notify_trade_setup_triggered(
+    snapshot: IntradaySnapshot,
+    user_id: Any | None = None,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> None:
     """Best-effort notify. Never raises — a notification-service outage must
     not break watchlist polling for the caller."""
     settings = get_settings()
@@ -221,7 +287,14 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
     if cache.exists(cache_key):
         return
 
-    title, message = _format_message(snapshot)
+    if not index_snapshots:
+        try:
+            from app.services.intraday_analysis import get_cached_index_snapshots
+            index_snapshots = get_cached_index_snapshots(setup.strategy, entry_mode)
+        except Exception:
+            index_snapshots = None
+
+    title, message = _format_message(snapshot, index_snapshots=index_snapshots)
     payload = {
         "channels": settings.notification_channels,
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
@@ -273,7 +346,11 @@ def notify_trade_setup_triggered(snapshot: IntradaySnapshot, user_id: Any | None
     )
 
 
-def notify_stop_loss_hit(snapshot: IntradaySnapshot, user_id: Any | None = None) -> None:
+def notify_stop_loss_hit(
+    snapshot: IntradaySnapshot,
+    user_id: Any | None = None,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> None:
     """Best-effort notify when a previously-triggered setup's stop-loss is breached."""
     settings = get_settings()
     if not settings.notification_service_enabled:
@@ -294,7 +371,14 @@ def notify_stop_loss_hit(snapshot: IntradaySnapshot, user_id: Any | None = None)
     if cache.exists(cache_key):
         return
 
-    title, message = _format_sl_hit_message(snapshot)
+    if not index_snapshots:
+        try:
+            from app.services.intraday_analysis import get_cached_index_snapshots
+            index_snapshots = get_cached_index_snapshots(setup.strategy, entry_mode)
+        except Exception:
+            index_snapshots = None
+
+    title, message = _format_sl_hit_message(snapshot, index_snapshots=index_snapshots)
     payload = {
         "channels": settings.notification_channels,
         "recipient": {"telegramChatId": settings.notification_telegram_chat_id},

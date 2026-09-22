@@ -206,6 +206,30 @@ def invalidate_snapshot_cache(
     return evicted
 
 
+def get_cached_index_snapshots(strategy: str = "orb_vwap", entry_mode: str = "close") -> dict[str, IntradaySnapshot]:
+    """Retrieves cached IntradaySnapshot instances for benchmark indices (NIFTY 50 and BANK NIFTY).
+    Checks both exact strategy/mode match and any active session snapshot as fallback."""
+    res: dict[str, IntradaySnapshot] = {}
+    now = time.time()
+    with _cache._lock:
+        for idx_sym in ("NIFTY50", "BANKNIFTY", "NIFTY 50", "BANK NIFTY"):
+            norm_name = "NIFTY 50" if "50" in idx_sym else "BANK NIFTY"
+            if norm_name in res:
+                continue
+            k = f"{idx_sym}:{strategy}:{entry_mode}:0:live"
+            hit = _cache._store.get(k)
+            if hit is not None and now - hit[0] < _CACHE_TTL_SECONDS:
+                res[norm_name] = hit[1]
+                continue
+            for key, val in _cache._store.items():
+                if (key.startswith(f"{idx_sym}:") or key.startswith(f"{norm_name}:")) and ":live" in key:
+                    if now - val[0] < _CACHE_TTL_SECONDS:
+                        res[norm_name] = val[1]
+                        break
+    return res
+
+
+
 class _TriggerStateCache:
     """Freezes the first trigger detected for a symbol each trading day.
 
