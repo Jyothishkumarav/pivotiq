@@ -73,17 +73,34 @@ def _gap_bias(candles_5m: list[dict]) -> str | None:
 
 
 def _find_breakout(
-    monitor: list[dict], orb_high: float, orb_low: float, orb_close_ts: float,
-    entry_cutoff_ts: float, direction: str,
-) -> int | None:
-    """First candle after 9:35 IST that closes beyond the ORB level in the allowed direction."""
+    monitor: list[dict],
+    orb_high: float,
+    orb_low: float,
+    orb_close_ts: float,
+    entry_cutoff_ts: float,
+    gap_bias: str | None = None,
+    entry_mode: str = "close",
+) -> tuple[int, str] | None:
+    """Earliest candle after 9:35 IST that breaks beyond the ORB box in an allowed direction.
+    Returns (candle_index, 'buy'|'sell') or None if no breakout occurred."""
+    allow_up = gap_bias != "sell"
+    allow_down = gap_bias != "buy"
     for i, c in enumerate(monitor):
         if c["ts"] < orb_close_ts or c["ts"] >= entry_cutoff_ts:
             continue
-        if direction == "buy" and c["close"] > orb_high:
-            return i
-        if direction == "sell" and c["close"] < orb_low:
-            return i
+        broke_high = c["close"] > orb_high if entry_mode == "close" else c["high"] > orb_high
+        broke_low = c["close"] < orb_low if entry_mode == "close" else c["low"] < orb_low
+        if broke_high and broke_low:
+            if allow_up and (gap_bias == "buy" or c["close"] >= c["open"]):
+                return i, "buy"
+            elif allow_down:
+                return i, "sell"
+            elif allow_up:
+                return i, "buy"
+        elif broke_high and allow_up:
+            return i, "buy"
+        elif broke_low and allow_down:
+            return i, "sell"
     return None
 
 
@@ -230,8 +247,9 @@ def compute_setup(
 
         # Self-healing: if legacy record froze stop_loss identical to sl_wide, recover the tight stop from monitor candles
         if abs(stop_loss - sl_wide) < 0.05:
-            breakout_idx = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, action)
-            if breakout_idx is not None:
+            bo = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, gap_bias=gap_bias, entry_mode=entry_mode)
+            if bo is not None:
+                breakout_idx, _ = bo
                 support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
                 if support_res is not None:
                     _, tight_stop, _, _, _ = support_res
@@ -243,27 +261,25 @@ def compute_setup(
             f"Broke ORB at ₹{entry:.2f}, pulled back, and entered at support candle level ₹{fill_level:.2f}. "
             f"Stop ₹{stop_loss:.2f}."
         )
-    elif setup_trend not in ("up", "down"):
-        action = gap_bias if gap_bias is not None else ("buy" if current_price >= vwap else "sell")
-        entry = orb_high if action == "buy" else orb_low
-        stop_loss = orb_low if action == "buy" else orb_high
-        sl_wide = stop_loss
-        triggered_at, trigger_price = None, None
-        status = "waiting"
-        rationale = f"Price still inside opening range ₹{orb_low:.2f}–₹{orb_high:.2f}. Waiting for a decisive break."
     else:
-        action = "buy" if setup_trend == "up" else "sell"
-        orb_level = orb_high if action == "buy" else orb_low
-        stop_loss = orb_low if action == "buy" else orb_high
-        sl_wide = stop_loss
-
-        breakout_idx = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, action)
-        if breakout_idx is None:
-            entry = orb_level
+        breakout = _find_breakout(
+            monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts,
+            gap_bias=gap_bias, entry_mode=entry_mode,
+        )
+        if breakout is None:
+            action = gap_bias if gap_bias is not None else ("buy" if current_price >= vwap else "sell")
+            entry = orb_high if action == "buy" else orb_low
+            stop_loss = orb_low if action == "buy" else orb_high
+            sl_wide = stop_loss
             triggered_at, trigger_price = None, None
             status = "waiting"
-            rationale = f"Waiting for a breakout {'above' if action == 'buy' else 'below'} opening range ₹{orb_level:.2f}."
+            rationale = f"Price still inside opening range ₹{orb_low:.2f}–₹{orb_high:.2f}. Waiting for a decisive break."
         else:
+            breakout_idx, action = breakout
+            orb_level = orb_high if action == "buy" else orb_low
+            stop_loss = orb_low if action == "buy" else orb_high
+            sl_wide = stop_loss
+
             support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
             if support_res is None:
                 triggered_at, trigger_price = None, None

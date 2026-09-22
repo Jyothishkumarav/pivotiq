@@ -747,18 +747,38 @@ def compute_snapshot(
             # constant regardless of how the monitor bar set reshuffles on refresh.
             setup_trend = frozen["action"]
             triggered_at = frozen["triggered_at"]
-        elif swing_complete and setup_trend in ("up", "down"):
+        elif swing_complete:
+            allow_up = gap_bias != "sell"
+            allow_down = gap_bias != "buy"
             for c in monitor:
                 if c["ts"] < orb_close_ts:
                     continue
                 if c["ts"] >= entry_cutoff_ts:
                     break  # no fresh entries past 14:45 IST
-                if setup_trend == "up" and c["high"] > orb_high:
+                broke_high = c["close"] > orb_high if entry_mode == "close" else c["high"] > orb_high
+                broke_low = c["close"] < orb_low if entry_mode == "close" else c["low"] < orb_low
+                if broke_high and broke_low:
+                    if allow_up and (gap_bias == "buy" or c["close"] >= c["open"]):
+                        setup_trend = "up"
+                        triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
+                        break
+                    elif allow_down:
+                        setup_trend = "down"
+                        triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
+                        break
+                    elif allow_up:
+                        setup_trend = "up"
+                        triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
+                        break
+                elif broke_high and allow_up:
+                    setup_trend = "up"
                     triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
-                if setup_trend == "down" and c["low"] < orb_low:
+                elif broke_low and allow_down:
+                    setup_trend = "down"
                     triggered_at = datetime.fromtimestamp(c["ts"] + trigger_bar_secs, tz=timezone.utc)
                     break
+
             if triggered_at is not None and not is_retest:
                 frozen = _trigger_state.freeze(symbol, today, triggered_at, setup_trend, entry_mode=entry_mode)
                 triggered_at = frozen["triggered_at"]
@@ -911,6 +931,7 @@ def _compute_pluggable_setup(
             current_price=current_price,
             trigger_bar_secs=trigger_bar_secs,
             entry_cutoff_ts=entry_cutoff_ts,
+            entry_mode=entry_mode,
             frozen=frozen,
         )
         if not is_retest and frozen is None and freeze_payload is not None:

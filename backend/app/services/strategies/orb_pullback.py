@@ -87,18 +87,27 @@ def _gap_bias(candles_5m: list[dict]) -> str | None:
 
 def _find_breakout(
     monitor: list[dict], orb_high: float, orb_low: float, orb_close_ts: float,
-    entry_cutoff_ts: float, gap_bias: str | None,
+    entry_cutoff_ts: float, gap_bias: str | None, entry_mode: str = "close",
 ) -> tuple[int, str] | None:
-    """First candle (index into `monitor`) whose CLOSE clears the ORB box in
+    """First candle (index into `monitor`) that clears the ORB box in
     an allowed direction. Returns (index, "buy"|"sell") or None."""
     allow_up = gap_bias != "sell"
     allow_down = gap_bias != "buy"
     for i, c in enumerate(monitor):
         if c["ts"] < orb_close_ts or c["ts"] >= entry_cutoff_ts:
             continue
-        if allow_up and c["close"] > orb_high:
+        broke_high = c["close"] > orb_high if entry_mode == "close" else c["high"] > orb_high
+        broke_low = c["close"] < orb_low if entry_mode == "close" else c["low"] < orb_low
+        if broke_high and broke_low:
+            if allow_up and (gap_bias == "buy" or c["close"] >= c["open"]):
+                return i, "buy"
+            elif allow_down:
+                return i, "sell"
+            elif allow_up:
+                return i, "buy"
+        elif broke_high and allow_up:
             return i, "buy"
-        if allow_down and c["close"] < orb_low:
+        elif broke_low and allow_down:
             return i, "sell"
     return None
 
@@ -202,6 +211,7 @@ def compute_setup(
     trigger_bar_secs: int,
     entry_cutoff_ts: float,
     frozen: dict | None,
+    entry_mode: str = "close",
 ) -> tuple[TradeSetup, dict | None]:
     # ORB macro stops: the structural level identified in the first 20 min.
     # For BUY the main SL is the ORB Low; for SELL it is the ORB High.
@@ -230,7 +240,7 @@ def compute_setup(
             else f"Breakout + pullback entry, tight stop ₹{stop_loss:.2f} (the pullback's own extreme)."
         )
     else:
-        breakout = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, gap_bias)
+        breakout = _find_breakout(monitor, orb_high, orb_low, orb_close_ts, entry_cutoff_ts, gap_bias, entry_mode=entry_mode)
         if breakout is None:
             # No breakout yet — entry = ORB threshold to break, SL = opposite ORB level
             action    = gap_bias if gap_bias is not None else ("buy" if current_price >= vwap else "sell")
