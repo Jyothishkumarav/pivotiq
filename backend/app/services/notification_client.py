@@ -62,29 +62,30 @@ def _format_index_line(name: str, snap: IntradaySnapshot) -> str:
     setup = snap.tradeSetup
     ltp_str = f"₹{snap.currentPrice:,.2f}"
     chg_str = f" ({snap.changePercent:+.2f}%)" if snap.changePercent is not None else ""
+    vwap_str = f" | {'Above' if snap.currentPrice >= snap.vwap else 'Below'} VWAP ₹{snap.vwap:,.2f}" if snap.vwap else ""
 
     if setup is None:
-        return f"• <b>{name}</b>  ·  LTP {ltp_str}{chg_str}"
+        return f"• <b>{name}</b>  ·  LTP {ltp_str}{chg_str}{vwap_str}"
 
     if setup.status == "triggered":
         action_emoji = "🟢" if setup.action == "buy" else "🔴"
         bo_level = setup.entry
         trig_time = setup.triggeredAt.astimezone(_IST).strftime("%H:%M") if setup.triggeredAt else ""
         time_part = f" at {trig_time}" if trig_time else ""
-        return f"• <b>{name}</b>  ·  {action_emoji} <b>{setup.action.upper()} Breakout</b> at <code>₹{bo_level:,.2f}</code>{time_part}  |  LTP {ltp_str}{chg_str}"
+        return f"• <b>{name}</b>  ·  {action_emoji} <b>{setup.action.upper()} Breakout</b> at <code>₹{bo_level:,.2f}</code>{time_part}  |  LTP {ltp_str}{chg_str}{vwap_str}"
 
     if setup.status == "pending_entry":
         bo_level = setup.entry
-        return f"• <b>{name}</b>  ·  🟡 Broke <code>₹{bo_level:,.2f}</code> · Pullback pending  |  LTP {ltp_str}{chg_str}"
+        return f"• <b>{name}</b>  ·  🟡 Broke <code>₹{bo_level:,.2f}</code> · Pullback pending  |  LTP {ltp_str}{chg_str}{vwap_str}"
 
     if setup.status == "sl_hit":
-        return f"• <b>{name}</b>  ·  🛑 {setup.action.upper()} SL Hit  |  LTP {ltp_str}{chg_str}"
+        return f"• <b>{name}</b>  ·  🛑 {setup.action.upper()} SL Hit  |  LTP {ltp_str}{chg_str}{vwap_str}"
 
     orb_h = snap.openingRangeHigh
     orb_l = snap.openingRangeLow
     if orb_h and orb_l:
-        return f"• <b>{name}</b>  ·  ⚪ Inside ORB (₹{orb_l:,.2f}–₹{orb_h:,.2f}) · Waiting  |  LTP {ltp_str}{chg_str}"
-    return f"• <b>{name}</b>  ·  ⚪ Range forming · Waiting  |  LTP {ltp_str}{chg_str}"
+        return f"• <b>{name}</b>  ·  ⚪ Inside ORB (₹{orb_l:,.2f}–₹{orb_h:,.2f}) · Waiting  |  LTP {ltp_str}{chg_str}{vwap_str}"
+    return f"• <b>{name}</b>  ·  ⚪ Range forming · Waiting  |  LTP {ltp_str}{chg_str}{vwap_str}"
 
 
 def _format_index_section(index_snapshots: dict[str, IntradaySnapshot] | None) -> list[str]:
@@ -130,6 +131,37 @@ def _format_message(
     ltp_sl     = abs(snapshot.currentPrice - setup.stopLoss)
     ltp_sl_p   = round((ltp_sl / setup.stopLoss) * 100, 2) if setup.stopLoss else 0.0
 
+    # Institutional VWAP proximity & evaluation
+    vwap_val = snapshot.vwap
+    vwap_diff = trade_entry - vwap_val
+    vwap_diff_pct = (vwap_diff / vwap_val) * 100 if vwap_val > 0 else 0.0
+    if setup.action == "buy":
+        if vwap_diff < 0:
+            vwap_badge = "⚠️"
+            vwap_note = "Below VWAP"
+        elif vwap_diff_pct <= 0.40:
+            vwap_badge = "🟢"
+            vwap_note = "Prime Entry (Near VWAP)"
+        elif vwap_diff_pct <= 0.80:
+            vwap_badge = "🟡"
+            vwap_note = "Moderate Extension"
+        else:
+            vwap_badge = "⚠️"
+            vwap_note = "Extended from VWAP"
+    else:
+        if vwap_diff > 0:
+            vwap_badge = "⚠️"
+            vwap_note = "Above VWAP"
+        elif abs(vwap_diff_pct) <= 0.40:
+            vwap_badge = "🟢"
+            vwap_note = "Prime Entry (Near VWAP)"
+        elif abs(vwap_diff_pct) <= 0.80:
+            vwap_badge = "🟡"
+            vwap_note = "Moderate Extension"
+        else:
+            vwap_badge = "⚠️"
+            vwap_note = "Extended from VWAP"
+
     has_wide_sl = setup.slWide is not None
     wide_diff   = abs(trade_entry - setup.slWide) if has_wide_sl and setup.slWide else 0.0
     wide_diff_p = round((wide_diff / setup.slWide) * 100, 2) if has_wide_sl and setup.slWide else 0.0
@@ -157,17 +189,26 @@ def _format_message(
     if breakout_level is not None:
         lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
 
+    vwap_sign = "+" if vwap_diff >= 0 else "−"
+    lines.append(f"VWAP       ·  <code>₹{vwap_val:,.2f}</code>  <i>({vwap_badge} {vwap_note} · Δ{vwap_sign}₹{abs(vwap_diff):,.2f} / {vwap_diff_pct:+.2f}%)</i>")
     lines.append(f"Target     ·  <code>₹{setup.target:,.2f}</code>  <i>(+₹{tgt_delta:,.2f} / +{tgt_delta_p:.2f}%)</i>")
     lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Δ₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
 
     if has_wide_sl and setup.slWide:
         lines.append(f"Main Stop  ·  <code>₹{setup.slWide:,.2f}</code>  <i>(MΔ₹{wide_diff:,.2f} / −{wide_diff_p:.2f}%)</i>")
 
+    vwap_pos_label = (
+        "Above VWAP (Institutional Bullish Support 🟢)"
+        if snapshot.currentPrice >= vwap_val
+        else "Below VWAP (Institutional Bearish Pressure 🔴)"
+    )
+
     lines.extend([
         "",
         # ── Risk stats ────────────────────────────────────────────────────
         f"Risk:Reward   ·  <b>1 : {setup.riskRewardRatio}</b>",
         f"SL from LTP   ·  ₹{ltp_sl:,.2f}  ({ltp_sl_p:.2f}%)",
+        f"VWAP Bias     ·  {vwap_pos_label}",
     ])
 
     if has_wide_sl and setup.slWide:
@@ -235,6 +276,7 @@ def _format_sl_hit_message(
     if breakout_level is not None:
         lines.append(f"BO Price   ·  <code>₹{breakout_level:,.2f}</code>")
 
+    lines.append(f"VWAP       ·  <code>₹{snapshot.vwap:,.2f}</code>")
     lines.append(f"Stop-Loss  ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Δ₹{entry_sl:,.2f} / −{entry_sl_p:.2f}%)</i>")
 
     if has_wide_sl and setup.slWide:
