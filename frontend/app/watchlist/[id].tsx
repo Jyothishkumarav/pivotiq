@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, LoadingBlock, Screen, Text } from "@/components/ui";
 import { StockRow } from "@/components/StockRow";
+import { IndexRow } from "@/components/IndexRow";
 import { StrategyAlertsModal } from "@/components/StrategyAlertsModal";
 import { watchlistsApi } from "@/api/watchlists";
 import { stocksApi } from "@/api/stocks";
@@ -679,7 +680,9 @@ export default function WatchlistDetailScreen() {
   const watchlist = watchlists?.find((w) => w.id === id);
 
   const symbols = watchlist?.items.map((i) => i.symbol) ?? [];
-  const symbolsKey = symbols.join(",");
+  const INDEX_SYMBOLS = useMemo(() => ["NIFTY50", "BANKNIFTY"], []);
+  const allSymbols = useMemo(() => Array.from(new Set([...INDEX_SYMBOLS, ...symbols])), [symbols, INDEX_SYMBOLS]);
+  const allSymbolsKey = allSymbols.join(",");
   const strategy = watchlist?.strategy ?? "orb_vwap";
 
   const [entryMode, setEntryMode] = useState<"close" | "touch">("close");
@@ -714,9 +717,9 @@ export default function WatchlistDetailScreen() {
   });
   const activeAlertsCount = strategyNotifs?.strategies.filter((s) => s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", symbolsKey, strategy, entryMode, includeFirstCandle, retestDate],
-    queryFn: () => stocksApi.intradaySnapshots(symbols, strategy, entryMode, retestDate, includeFirstCandle),
-    enabled: symbols.length > 0,
+    queryKey: ["intraday", allSymbolsKey, strategy, entryMode, includeFirstCandle, retestDate],
+    queryFn: () => stocksApi.intradaySnapshots(allSymbols, strategy, entryMode, retestDate, includeFirstCandle),
+    enabled: allSymbols.length > 0,
     refetchInterval: retestDate ? false : 60_000,
     retry: false,
   });
@@ -946,45 +949,81 @@ export default function WatchlistDetailScreen() {
       ) : null}
 
       {/* Holdings list */}
-      {watchlist.items.length === 0 ? (
-        <Card
-          style={{
-            alignItems: "center",
-            gap: spacing.md,
-            paddingVertical: spacing.xxxl,
-            borderStyle: "dashed",
-          }}
-        >
-          <Text variant="subtitle">This watchlist is empty</Text>
-          <Text variant="caption" tone="secondary" style={{ textAlign: "center" }}>
-            Add stocks to start tracking price and proximity to support.
-          </Text>
-          <Button label="+ Add your first stock" size="sm" onPress={() => setShowAdd(true)} />
-        </Card>
-      ) : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ minWidth: 1140, width: "100%" }}
-        >
-          <View style={{ width: "100%", gap: spacing.xs }}>
-            <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />
-            <SortableHeader state={sort} onChange={setSort} />
-            {sortItems(watchlist.items, sort).map((item) => (
-              <StockRow
-                key={item.symbol}
-                item={item}
-                intraday={intradayMap[item.symbol] ?? null}
-                onPress={() => {
-                  const href = openStock(item.symbol);
-                  if (href) router.push(href);
-                }}
-                onRemove={() => removeMutation.mutate(item.symbol)}
-              />
-            ))}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ minWidth: 1140, width: "100%" }}
+      >
+        <View style={{ width: "100%", gap: spacing.xs }}>
+          <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />
+          <SortableHeader state={sort} onChange={setSort} />
+
+          {/* Benchmark Market Indices */}
+          <View style={{ gap: 4, marginBottom: spacing.xs }}>
+            <IndexRow
+              name="NIFTY 50"
+              symbol="NIFTY50"
+              intraday={intradayMap["NIFTY50"] ?? null}
+              accentColor="#5B8BFF"
+              onPress={() => {
+                const href = openStock("NIFTY50");
+                if (href) router.push(href);
+              }}
+            />
+            <IndexRow
+              name="BANK NIFTY"
+              symbol="BANKNIFTY"
+              intraday={intradayMap["BANKNIFTY"] ?? null}
+              accentColor="#F5B54A"
+              onPress={() => {
+                const href = openStock("BANKNIFTY");
+                if (href) router.push(href);
+              }}
+            />
           </View>
-        </ScrollView>
-      )}
+
+          {watchlist.items.length === 0 ? (
+            <Card
+              style={{
+                alignItems: "center",
+                gap: spacing.md,
+                paddingVertical: spacing.xxxl,
+                borderStyle: "dashed",
+                marginTop: spacing.md,
+              }}
+            >
+              <Text variant="subtitle">This watchlist is empty</Text>
+              <Text variant="caption" tone="secondary" style={{ textAlign: "center" }}>
+                Add stocks to start tracking price and proximity to support.
+              </Text>
+              <Button label="+ Add your first stock" size="sm" onPress={() => setShowAdd(true)} />
+            </Card>
+          ) : (
+            <>
+              {/* Subtle section label */}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, marginTop: spacing.xs, marginBottom: 2 }}>
+                <Text variant="caption" tone="muted" style={{ textTransform: "uppercase", letterSpacing: 1, fontWeight: "600", fontSize: 11 }}>
+                  Watchlist Stocks ({watchlist.items.length})
+                </Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.borderSubtle }} />
+              </View>
+
+              {sortItems(watchlist.items, sort).map((item) => (
+                <StockRow
+                  key={item.symbol}
+                  item={item}
+                  intraday={intradayMap[item.symbol] ?? null}
+                  onPress={() => {
+                    const href = openStock(item.symbol);
+                    if (href) router.push(href);
+                  }}
+                  onRemove={() => removeMutation.mutate(item.symbol)}
+                />
+              ))}
+            </>
+          )}
+        </View>
+      </ScrollView>
 
       <StrategyAlertsModal
         visible={showStrategyAlerts}

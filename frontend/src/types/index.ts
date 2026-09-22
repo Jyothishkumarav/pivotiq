@@ -205,6 +205,8 @@ export interface IntradaySnapshot {
   tradeSetup: TradeSetup | null;
   updatedAt: string;
   retestDate?: string | null;
+  prevClose?: number | null;
+  changePercent?: number | null;
 }
 
 export interface IntradaySnapshotsResponse {

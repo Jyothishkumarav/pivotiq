@@ -117,6 +117,8 @@ class IntradaySnapshot(BaseModel):
     tradeSetup: TradeSetup | None = None
     updatedAt: datetime
     retestDate: str | None = None
+    prevClose: float | None = None
+    changePercent: float | None = None
 
 
 class IntradaySnapshotsRequest(BaseModel):

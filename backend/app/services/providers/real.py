@@ -133,13 +133,25 @@ class RealProvider:
             self._yahoo_cooldown_until[symbol] = time.time() + _YAHOO_COOLDOWN_SECONDS
 
     def _yf_symbol(self, symbol: str) -> str:
-        return f"{symbol.upper()}.NS"
+        s = symbol.strip().upper()
+        if s in ("NIFTY", "NIFTY50", "NIFTY 50"):
+            return "^NSEI"
+        if s in ("BANKNIFTY", "NIFTYBANK", "NIFTY BANK", "BANK NIFTY"):
+            return "^NSEBANK"
+        if s in ("FINNIFTY", "NIFTY FIN SERVICE"):
+            return "NIFTY_FIN_SERVICE.NS"
+        return f"{s}.NS"
 
     def _ticker(self, symbol: str) -> "yf.Ticker":
         return yf.Ticker(self._yf_symbol(symbol))
 
     def _snapshot_from_db(self, symbol: str) -> dict | None:
-        doc = self._db.stock_symbols.find_one({"symbol": symbol.upper()})
+        s = symbol.strip().upper()
+        if s in ("NIFTY", "NIFTY50", "NIFTY 50"):
+            return {"symbol": "NIFTY50", "name": "NIFTY 50", "exchange": "NSE", "ltp": 0.0, "prevClose": 0.0}
+        if s in ("BANKNIFTY", "NIFTYBANK", "NIFTY BANK", "BANK NIFTY"):
+            return {"symbol": "BANKNIFTY", "name": "NIFTY BANK", "exchange": "NSE", "ltp": 0.0, "prevClose": 0.0}
+        doc = self._db.stock_symbols.find_one({"symbol": s})
         return doc.get("snapshot") if doc else None
 
     def _invalidate_fyers_credentials(self, access_token: str) -> None:
@@ -564,7 +576,10 @@ class RealProvider:
 
     # ---------------- Existence ----------------
     def symbol_exists(self, symbol: str) -> bool:
-        return self._db.stock_symbols.count_documents({"symbol": symbol.upper()}, limit=1) > 0
+        s = symbol.strip().upper()
+        if s in ("NIFTY", "NIFTY50", "NIFTY 50", "BANKNIFTY", "NIFTYBANK", "NIFTY BANK", "BANK NIFTY", "FINNIFTY"):
+            return True
+        return self._db.stock_symbols.count_documents({"symbol": s}, limit=1) > 0
 
     # ---------------- Candles ----------------
     def _fetch_candles_from_fyers(self, symbol: str, access_token: str, period: str) -> list[Candle]:

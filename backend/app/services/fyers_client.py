@@ -109,9 +109,29 @@ def get_positions(access_token: str) -> dict:
     return _parse(resp)
 
 
+INDEX_FYERS_SYMBOLS: dict[str, str] = {
+    "NIFTY": "NSE:NIFTY50-INDEX",
+    "NIFTY50": "NSE:NIFTY50-INDEX",
+    "NIFTY 50": "NSE:NIFTY50-INDEX",
+    "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+    "NIFTYBANK": "NSE:NIFTYBANK-INDEX",
+    "NIFTY BANK": "NSE:NIFTYBANK-INDEX",
+    "BANK NIFTY": "NSE:NIFTYBANK-INDEX",
+    "FINNIFTY": "NSE:FINNIFTY-INDEX",
+    "NIFTY FIN SERVICE": "NSE:FINNIFTY-INDEX",
+}
+
+
 def nse_symbol(symbol: str) -> str:
-    """Map a bare NSE ticker (`TCS`) to Fyers' format (`NSE:TCS-EQ`)."""
-    return f"NSE:{symbol.upper()}-EQ"
+    """Map an NSE ticker (`TCS`, `NIFTY50`) to Fyers' format (`NSE:TCS-EQ`, `NSE:NIFTY50-INDEX`)."""
+    s = symbol.strip().upper()
+    if s.startswith("NSE:"):
+        return s
+    if s in INDEX_FYERS_SYMBOLS:
+        return INDEX_FYERS_SYMBOLS[s]
+    if s.endswith("-INDEX"):
+        return f"NSE:{s}"
+    return f"NSE:{s}-EQ"
 
 
 def get_quotes(access_token: str, symbols: list[str]) -> dict:

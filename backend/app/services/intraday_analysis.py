@@ -705,14 +705,22 @@ def compute_snapshot(
     trigger_bar_secs = _FINE_RESOLUTION_SECS if candles_3m else 300
     entry_cutoff_ts = _entry_cutoff_ts(today)
 
-    if strategy != "orb_vwap":
-        # In live mode, refresh displayed current_price to the real-time LTP quote.
-        # In retest mode, strictly use the historical session's candle close price.
-        if not is_retest:
-            live_quote = market_data.get_quote(symbol, access_token=access_token)
-            if live_quote is not None and live_quote.ltp:
+    prev_close: float | None = None
+    change_pct: float | None = None
+    if not is_retest:
+        live_quote = market_data.get_quote(symbol, access_token=access_token)
+        if live_quote is not None:
+            if live_quote.ltp:
                 current_price = live_quote.ltp
+            prev_close = live_quote.prevClose
+            change_pct = live_quote.changePercent
 
+    if change_pct is None and candles_5m and candles_5m[0].get("open"):
+        first_open = candles_5m[0]["open"]
+        prev_close = first_open
+        change_pct = round(((current_price - first_open) / first_open) * 100, 2)
+
+    if strategy != "orb_vwap":
         trade_setup = _compute_pluggable_setup(
             strategy=strategy,
             symbol=symbol,
@@ -805,6 +813,8 @@ def compute_snapshot(
         tradeSetup=trade_setup,
         updatedAt=datetime.now(timezone.utc),
         retestDate=retest_date,
+        prevClose=round(prev_close, 2) if prev_close is not None else None,
+        changePercent=round(change_pct, 2) if change_pct is not None else None,
     )
     _cache.set(cache_key, snapshot)
     return snapshot
