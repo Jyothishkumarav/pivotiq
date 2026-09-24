@@ -96,8 +96,8 @@ def _find_breakout(
     for i, c in enumerate(monitor):
         if c["ts"] < orb_close_ts or c["ts"] >= entry_cutoff_ts:
             continue
-        broke_high = c["close"] > orb_high if entry_mode == "close" else c["high"] > orb_high
-        broke_low = c["close"] < orb_low if entry_mode == "close" else c["low"] < orb_low
+        broke_high = c["close"] > orb_high
+        broke_low = c["close"] < orb_low
         if broke_high and broke_low:
             if allow_up and (gap_bias == "buy" or c["close"] >= c["open"]):
                 return i, "buy"
