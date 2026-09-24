@@ -142,13 +142,17 @@ def _resolve_telegram_title(chat_id: str) -> str | None:
 
 async def _get_channel_doc(db, user_id: str) -> dict | None:
     """Fetch user_settings doc for strategy_notifications.
-    First tries user-scoped doc, then falls back to any global (userId-less) doc.
+    First tries user-scoped doc, then falls back to any global (userId-less/null) doc.
     This handles docs seeded directly into Mongo without a userId."""
     doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
     if doc is None:
-        # Fall back to global doc (no userId) – e.g. seeded via mongosh
-        doc = await db.user_settings.find_one({"type": "strategy_notifications", "userId": {"$exists": False}})
+        # Fall back to global doc — userId missing OR null (seeded via mongosh)
+        doc = await db.user_settings.find_one({
+            "type": "strategy_notifications",
+            "$or": [{"userId": {"$exists": False}}, {"userId": None}, {"userId": ""}],
+        })
     return doc
+
 
 
 @router.get("/strategy-channels", response_model=StrategyNotificationsResponse)
