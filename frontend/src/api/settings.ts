@@ -10,6 +10,7 @@ export interface StrategyNotificationItem {
   key: string;
   label: string;
   enabled: boolean;
+  telegramChannelId?: string | null;
 }
 
 export interface StrategyNotificationsResponse {
@@ -23,4 +24,8 @@ export const settingsApi = {
     apiClient.get<StrategyNotificationsResponse>("/settings/strategy-notifications"),
   updateStrategyNotification: (key: string, enabled: boolean) =>
     apiClient.put<StrategyNotificationsResponse>("/settings/strategy-notifications", { key, enabled }),
+  getStrategyChannels: () =>
+    apiClient.get<StrategyNotificationsResponse>("/settings/strategy-channels"),
+  updateStrategyChannel: (key: string, telegramChannelId: string | null) =>
+    apiClient.put<StrategyNotificationsResponse>("/settings/strategy-channels", { key, telegramChannelId }),
 };

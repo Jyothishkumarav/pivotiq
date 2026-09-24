@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.schemas.strategy import (
     STRATEGY_DISPLAY_NAMES,
+    StrategyChannelUpdate,
     StrategyName,
     StrategyNotificationItem,
     StrategyNotificationsResponse,
@@ -102,6 +103,76 @@ async def update_strategy_notification(
             key=s.value,
             label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
             enabled=s.value in enabled_set,
+        )
+        for s in StrategyName
+    ]
+    return StrategyNotificationsResponse(strategies=items)
+
+
+def _get_strategy_channels(doc: dict | None) -> dict[str, str]:
+    """Return {strategy_key: telegram_channel_id} from user_settings doc."""
+    if doc and "strategyChannels" in doc:
+        return dict(doc["strategyChannels"])
+    return {}
+
+
+@router.get("/strategy-channels", response_model=StrategyNotificationsResponse)
+async def get_strategy_channels(
+    current_user: dict = Depends(get_current_user),
+) -> StrategyNotificationsResponse:
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    enabled_set = _get_user_enabled_set(user_id, doc)
+    channels = _get_strategy_channels(doc)
+
+    items = [
+        StrategyNotificationItem(
+            key=s.value,
+            label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
+            enabled=s.value in enabled_set,
+            telegramChannelId=channels.get(s.value),
+        )
+        for s in StrategyName
+    ]
+    return StrategyNotificationsResponse(strategies=items)
+
+
+@router.put("/strategy-channels", response_model=StrategyNotificationsResponse)
+async def update_strategy_channel(
+    payload: StrategyChannelUpdate,
+    current_user: dict = Depends(get_current_user),
+) -> StrategyNotificationsResponse:
+    valid_keys = {s.value for s in StrategyName}
+    if payload.key not in valid_keys:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid strategy key: {payload.key!r}",
+        )
+
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    enabled_set = _get_user_enabled_set(user_id, doc)
+    channels = _get_strategy_channels(doc)
+
+    if payload.telegramChannelId:
+        channels[payload.key] = payload.telegramChannelId.strip()
+    else:
+        channels.pop(payload.key, None)  # clear → fall back to global default
+
+    await db.user_settings.update_one(
+        {"userId": user_id, "type": "strategy_notifications"},
+        {"$set": {"strategyChannels": channels}},
+        upsert=True,
+    )
+
+    items = [
+        StrategyNotificationItem(
+            key=s.value,
+            label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
+            enabled=s.value in enabled_set,
+            telegramChannelId=channels.get(s.value),
         )
         for s in StrategyName
     ]

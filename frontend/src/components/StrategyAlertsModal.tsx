@@ -1,7 +1,14 @@
-import React from "react";
-import { Modal, Platform, Pressable, Switch, View } from "react-native";
+import React, { useState } from "react";
+import {
+  Modal,
+  Platform,
+  Pressable,
+  Switch,
+  TextInput,
+  View,
+} from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, Card, LoadingBlock, Text } from "@/components/ui";
+import { Badge, Button, LoadingBlock, Text } from "@/components/ui";
 import { settingsApi, StrategyNotificationItem } from "@/api/settings";
 import { colors, radius, spacing } from "@/theme/tokens";
 
@@ -12,10 +19,14 @@ interface Props {
 
 const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   orb_vwap: "Enters on initial ORB breakout aligned with VWAP.",
-  context_gated: "Filters breakouts using market gap bias, trend, and HL-BOS structure.",
-  orb_pullback: "Waits for pullback to complete, enters on break of pullback high/low.",
-  orb_pullback_support: "Early entry on break of the first supporting reversal candle.",
-  orb_flow: "Morning window breakout with 3m close confirmation and index confluence position sizing.",
+  context_gated:
+    "Filters breakouts using market gap bias, trend, and HL-BOS structure.",
+  orb_pullback:
+    "Waits for pullback to complete, enters on break of pullback high/low.",
+  orb_pullback_support:
+    "Early entry on break of the first supporting reversal candle.",
+  orb_flow:
+    "Morning window breakout with 3m close confirmation and index confluence position sizing.",
 };
 
 const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
@@ -26,12 +37,205 @@ const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
   orb_flow: { glyph: "⚡", color: "#7B61FF" },
 };
 
+// ─── Per-strategy channel ID row ──────────────────────────────────────────────
+function ChannelRow({
+  stratKey,
+  currentChannelId,
+}: {
+  stratKey: string;
+  currentChannelId?: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const [draft, setDraft] = useState(currentChannelId ?? "");
+  const [saved, setSaved] = useState(false);
+
+  const channelMutation = useMutation({
+    mutationFn: ({ key, id }: { key: string; id: string | null }) =>
+      settingsApi.updateStrategyChannel(key, id),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["strategy-channels"], data);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    },
+  });
+
+  const handleSave = () => {
+    channelMutation.mutate({ key: stratKey, id: draft.trim() || null });
+  };
+
+  const handleClear = () => {
+    setDraft("");
+    channelMutation.mutate({ key: stratKey, id: null });
+  };
+
+  const hasValue = !!currentChannelId;
+
+  return (
+    <View
+      style={{
+        marginTop: spacing.xs,
+        borderTopWidth: 1,
+        borderTopColor: colors.borderSubtle,
+        paddingTop: spacing.xs,
+      }}
+    >
+      <Pressable
+        onPress={() => setExpanded((v) => !v)}
+        style={({ hovered }: any) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing.xs,
+          paddingVertical: 4,
+          paddingHorizontal: 2,
+          borderRadius: radius.sm,
+          backgroundColor: hovered ? `${colors.accent}10` : "transparent",
+        })}
+      >
+        <Text style={{ fontSize: 11, color: colors.textSecondary }}>
+          {expanded ? "▾" : "▸"}
+        </Text>
+        <Text variant="caption" tone={hasValue ? "accent" : "muted"}>
+          Telegram Channel
+        </Text>
+        {hasValue ? (
+          <View
+            style={{
+              paddingHorizontal: 6,
+              paddingVertical: 2,
+              borderRadius: 99,
+              backgroundColor: `${colors.accent}20`,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10,
+                color: colors.accent,
+                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
+              }}
+            >
+              {currentChannelId}
+            </Text>
+          </View>
+        ) : (
+          <Text variant="caption" tone="muted" style={{ fontStyle: "italic" } as any}>
+            (global default)
+          </Text>
+        )}
+      </Pressable>
+
+      {expanded && (
+        <View
+          style={{
+            marginTop: spacing.xs,
+            padding: spacing.sm,
+            borderRadius: radius.md,
+            backgroundColor: colors.surfaceElevated,
+            borderWidth: 1,
+            borderColor: colors.borderSubtle,
+            gap: spacing.sm,
+          }}
+        >
+          <Text variant="caption" tone="secondary">
+            Enter the Telegram Chat/Channel ID (e.g.{" "}
+            <Text
+              variant="caption"
+              style={{
+                color: colors.accent,
+                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
+              }}
+            >
+              -1001234567890
+            </Text>
+            ). Leave blank to use the global default.
+          </Text>
+
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+            <TextInput
+              value={draft}
+              onChangeText={(t) => {
+                setDraft(t);
+                setSaved(false);
+              }}
+              placeholder="-100xxxxxxxxxx"
+              placeholderTextColor={colors.textSecondary}
+              style={{
+                flex: 1,
+                height: 36,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.background,
+                color: colors.text,
+                paddingHorizontal: spacing.sm,
+                fontSize: 13,
+                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
+              }}
+            />
+            <Pressable
+              onPress={handleSave}
+              disabled={channelMutation.isPending}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.md,
+                height: 36,
+                borderRadius: radius.sm,
+                backgroundColor: saved
+                  ? colors.positive
+                  : hovered
+                  ? `${colors.accent}cc`
+                  : colors.accent,
+                justifyContent: "center",
+                alignItems: "center",
+                opacity: channelMutation.isPending ? 0.6 : 1,
+              })}
+            >
+              <Text style={{ fontSize: 12, color: "#fff", fontWeight: "600" }}>
+                {saved ? "✓ Saved" : channelMutation.isPending ? "Saving…" : "Save"}
+              </Text>
+            </Pressable>
+            {hasValue && (
+              <Pressable
+                onPress={handleClear}
+                style={({ hovered }: any) => ({
+                  paddingHorizontal: spacing.sm,
+                  height: 36,
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: colors.borderSubtle,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  backgroundColor: hovered ? `${colors.negative}15` : "transparent",
+                })}
+              >
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>Clear</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {channelMutation.isError && (
+            <Text variant="caption" style={{ color: colors.negative } as any}>
+              Failed to save. Please try again.
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Main modal ───────────────────────────────────────────────────────────────
 export function StrategyAlertsModal({ visible, onClose }: Props) {
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data: notifData, isLoading: notifLoading } = useQuery({
     queryKey: ["strategy-notifications"],
     queryFn: settingsApi.getStrategyNotifications,
+    enabled: visible,
+  });
+
+  const { data: channelData } = useQuery({
+    queryKey: ["strategy-channels"],
+    queryFn: settingsApi.getStrategyChannels,
     enabled: visible,
   });
 
@@ -40,9 +244,9 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
       settingsApi.updateStrategyNotification(key, enabled),
     onMutate: async ({ key, enabled }) => {
       await queryClient.cancelQueries({ queryKey: ["strategy-notifications"] });
-      const prev = queryClient.getQueryData<{ strategies: StrategyNotificationItem[] }>([
-        "strategy-notifications",
-      ]);
+      const prev = queryClient.getQueryData<{ strategies: StrategyNotificationItem[] }>(
+        ["strategy-notifications"]
+      );
       if (prev) {
         queryClient.setQueryData(["strategy-notifications"], {
           strategies: prev.strategies.map((s) =>
@@ -63,16 +267,17 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
   });
 
   const HIDDEN_STRATEGIES = ["orb_vwap", "context_gated"];
-  const strategies = (data?.strategies ?? []).filter((s) => !HIDDEN_STRATEGIES.includes(s.key));
+  const strategies = (notifData?.strategies ?? []).filter(
+    (s) => !HIDDEN_STRATEGIES.includes(s.key)
+  );
   const enabledCount = strategies.filter((s) => s.enabled).length;
 
+  const channelMap: Record<string, string | null | undefined> = Object.fromEntries(
+    (channelData?.strategies ?? []).map((s) => [s.key, s.telegramChannelId])
+  );
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
         onPress={onClose}
         style={{
@@ -87,7 +292,7 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
           onPress={(e) => e.stopPropagation()}
           style={{
             width: "100%",
-            maxWidth: 540,
+            maxWidth: 560,
             backgroundColor: colors.surface,
             borderRadius: radius.lg,
             borderWidth: 1,
@@ -107,7 +312,8 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
                 <Badge label="Telegram" tone="neutral" />
               </View>
               <Text variant="caption" tone="secondary">
-                Control which strategies fire automated alerts to your connected Telegram channel.
+                Toggle strategies on/off and assign a dedicated Telegram Channel ID per
+                strategy to keep alerts organised.
               </Text>
             </View>
             <Pressable
@@ -165,21 +371,19 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
             </View>
           </View>
 
-          {/* Strategy List */}
-          {isLoading && strategies.length === 0 ? (
+          {/* Strategy list */}
+          {notifLoading && strategies.length === 0 ? (
             <LoadingBlock label="Loading strategy settings…" compact />
           ) : (
             <View style={{ gap: spacing.sm }}>
               {strategies.map((strat) => {
                 const badge = STRATEGY_BADGES[strat.key] ?? { glyph: "📈", color: colors.accent };
                 const desc = STRATEGY_DESCRIPTIONS[strat.key] ?? "";
+                const channelId = channelMap[strat.key];
                 return (
                   <View
                     key={strat.key}
                     style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
                       padding: spacing.md,
                       borderRadius: radius.md,
                       borderWidth: 1,
@@ -187,36 +391,37 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
                       backgroundColor: strat.enabled ? `${colors.surfaceElevated}` : "transparent",
                     }}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1, paddingRight: spacing.md }}>
-                      <View
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: 8,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: `${badge.color}15`,
-                          borderWidth: 1,
-                          borderColor: `${badge.color}35`,
-                        }}
-                      >
-                        <Text style={{ fontSize: 16 }}>{badge.glyph}</Text>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1, paddingRight: spacing.md }}>
+                        <View
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 8,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: `${badge.color}15`,
+                            borderWidth: 1,
+                            borderColor: `${badge.color}35`,
+                          }}
+                        >
+                          <Text style={{ fontSize: 16 }}>{badge.glyph}</Text>
+                        </View>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text variant="bodyStrong">{strat.label}</Text>
+                          {desc ? (
+                            <Text variant="caption" tone="muted" numberOfLines={2}>{desc}</Text>
+                          ) : null}
+                        </View>
                       </View>
-                      <View style={{ flex: 1, gap: 2 }}>
-                        <Text variant="bodyStrong">{strat.label}</Text>
-                        {desc ? (
-                          <Text variant="caption" tone="muted" numberOfLines={2}>
-                            {desc}
-                          </Text>
-                        ) : null}
-                      </View>
+                      <Switch
+                        value={strat.enabled}
+                        onValueChange={(val) => toggleMutation.mutate({ key: strat.key, enabled: val })}
+                        trackColor={{ false: colors.borderSubtle, true: colors.positive }}
+                        thumbColor={strat.enabled ? "#FFFFFF" : colors.textSecondary}
+                      />
                     </View>
-                    <Switch
-                      value={strat.enabled}
-                      onValueChange={(val) => toggleMutation.mutate({ key: strat.key, enabled: val })}
-                      trackColor={{ false: colors.borderSubtle, true: colors.positive }}
-                      thumbColor={strat.enabled ? "#FFFFFF" : colors.textSecondary}
-                    />
+                    <ChannelRow stratKey={strat.key} currentChannelId={channelId} />
                   </View>
                 );
               })}

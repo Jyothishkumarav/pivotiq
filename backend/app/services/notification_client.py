@@ -58,6 +58,30 @@ def get_user_enabled_strategies(user_id: Any | None = None) -> set[str]:
     return set(settings.notification_enabled_strategies)
 
 
+def get_strategy_telegram_channel(strategy: str, user_id: Any | None = None) -> str:
+    """Return the Telegram chat_id to use for this strategy.
+    Prefers a per-strategy override stored in user_settings.strategyChannels;
+    falls back to the global NOTIFICATION_TELEGRAM_CHAT_ID env variable."""
+    settings = get_settings()
+    global_chat_id = settings.notification_telegram_chat_id
+
+    if not user_id:
+        return global_chat_id
+
+    try:
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        doc = db.user_settings.find_one({"userId": str(user_id), "type": "strategy_notifications"})
+        if doc and "strategyChannels" in doc:
+            channel = doc["strategyChannels"].get(strategy)
+            if channel:
+                return channel
+    except Exception as exc:
+        logger.warning("Could not read per-strategy channel for %s: %s", strategy, exc)
+
+    return global_chat_id
+
+
 def _format_index_line(name: str, snap: IntradaySnapshot) -> str:
     setup = snap.tradeSetup
     ltp_str = f"₹{snap.currentPrice:,.2f}"
@@ -343,9 +367,10 @@ def notify_trade_setup_triggered(
             index_snapshots = None
 
     title, message = _format_message(snapshot, index_snapshots=index_snapshots)
+    chat_id = get_strategy_telegram_channel(setup.strategy, user_id)
     payload = {
         "channels": settings.notification_channels,
-        "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
+        "recipient": {"telegramChatId": chat_id},
         "title": title,
         "data": message,
         "reference": f"trigger-{snapshot.symbol}-{setup.strategy}-{entry_mode}-{date_str}",
@@ -427,9 +452,10 @@ def notify_stop_loss_hit(
             index_snapshots = None
 
     title, message = _format_sl_hit_message(snapshot, index_snapshots=index_snapshots)
+    chat_id = get_strategy_telegram_channel(setup.strategy, user_id)
     payload = {
         "channels": settings.notification_channels,
-        "recipient": {"telegramChatId": settings.notification_telegram_chat_id},
+        "recipient": {"telegramChatId": chat_id},
         "title": title,
         "data": message,
         "reference": f"slhit-{snapshot.symbol}-{setup.strategy}-{entry_mode}-{date_str}",
