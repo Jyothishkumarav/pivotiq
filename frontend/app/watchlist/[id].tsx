@@ -66,8 +66,14 @@ function sortItems(items: WatchlistItem[], state: SortState): WatchlistItem[] {
     const vb = extract(b);
     if (va === null || va === undefined) return 1;
     if (vb === null || vb === undefined) return -1;
-    if (typeof va === "string" && typeof vb === "string") return sign * va.localeCompare(vb);
-    return sign * (Number(va) - Number(vb));
+    let diff = 0;
+    if (typeof va === "string" && typeof vb === "string") {
+      diff = sign * va.localeCompare(vb);
+    } else {
+      diff = sign * (Number(va) - Number(vb));
+    }
+    if (diff !== 0) return diff;
+    return a.symbol.localeCompare(b.symbol);
   });
 }
 
@@ -769,7 +775,7 @@ export default function WatchlistDetailScreen() {
     },
   });
 
-  const [sort, setSort] = useState<SortState>({ key: "support", dir: "asc" });
+  const [sort, setSort] = useState<SortState>({ key: "symbol", dir: "asc" });
 
   if (isLoading || !watchlist) {
     return (

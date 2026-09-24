@@ -43,15 +43,17 @@ def _enrich_item(raw_item: dict) -> WatchlistItemOut:
 
 
 def _sort_items(items: list[WatchlistItemOut], preference: str) -> list[WatchlistItemOut]:
-    if preference == "alphabetical":
-        return sorted(items, key=lambda i: i.symbol)
+    if preference == "proximity":
+        with_support = [i for i in items if not i.belowAllSupports]
+        without_support = [i for i in items if i.belowAllSupports]
+        with_support.sort(key=lambda i: (i.distanceToSupportPercent if i.distanceToSupportPercent is not None else float("inf"), i.symbol))
+        return with_support + without_support
     if preference == "dayChange":
-        return sorted(items, key=lambda i: (i.changePercent is None, -(i.changePercent or 0)))
-    # default: proximity to support, ascending distance; unresolved/below-all sort last
-    with_support = [i for i in items if not i.belowAllSupports]
-    without_support = [i for i in items if i.belowAllSupports]
-    with_support.sort(key=lambda i: i.distanceToSupportPercent if i.distanceToSupportPercent is not None else float("inf"))
-    return with_support + without_support
+        return sorted(items, key=lambda i: (i.changePercent is None, -(i.changePercent or 0), i.symbol))
+    if preference == "custom":
+        return items
+    # default: alphabetical by symbol
+    return sorted(items, key=lambda i: i.symbol)
 
 
 def _to_out(doc: dict, sorted_items: list[WatchlistItemOut]) -> WatchlistOut:
@@ -59,7 +61,7 @@ def _to_out(doc: dict, sorted_items: list[WatchlistItemOut]) -> WatchlistOut:
         id=str(doc["_id"]),
         userId=str(doc["userId"]),
         name=doc["name"],
-        sortPreference=doc.get("sortPreference", "proximity"),
+        sortPreference=doc.get("sortPreference", "alphabetical"),
         strategy=doc.get("strategy", "orb_vwap"),
         createdAt=doc["createdAt"],
         updatedAt=doc["updatedAt"],
@@ -86,7 +88,7 @@ async def list_watchlists(current_user: dict = Depends(get_current_user)) -> lis
     result = []
     async for doc in cursor:
         enriched = [_enrich_item(i) for i in doc.get("items", [])]
-        sorted_items = _sort_items(enriched, doc.get("sortPreference", "proximity"))
+        sorted_items = _sort_items(enriched, doc.get("sortPreference", "alphabetical"))
         result.append(_to_out(doc, sorted_items))
     return result
 
@@ -98,7 +100,7 @@ async def create_watchlist(payload: WatchlistCreate, current_user: dict = Depend
     doc = {
         "userId": current_user["_id"],
         "name": payload.name,
-        "sortPreference": "proximity",
+        "sortPreference": "alphabetical",
         "strategy": "orb_vwap",
         "items": [],
         "createdAt": now,
@@ -118,7 +120,7 @@ async def rename_watchlist(watchlist_id: str, payload: WatchlistRename, current_
     doc["name"] = payload.name
     doc["updatedAt"] = now
     enriched = [_enrich_item(i) for i in doc.get("items", [])]
-    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "proximity")))
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
 @router.delete("/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -146,7 +148,7 @@ async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: di
     )
     doc["items"] = doc.get("items", []) + [new_item]
     enriched = [_enrich_item(i) for i in doc["items"]]
-    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "proximity")))
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
 @router.delete("/{watchlist_id}/items/{symbol}", response_model=WatchlistOut)
@@ -159,7 +161,7 @@ async def remove_item(watchlist_id: str, symbol: str, current_user: dict = Depen
     )
     doc["items"] = [i for i in doc.get("items", []) if i["symbol"] != symbol.upper()]
     enriched = [_enrich_item(i) for i in doc["items"]]
-    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "proximity")))
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
 @router.put("/{watchlist_id}/reorder", response_model=WatchlistOut)
@@ -209,4 +211,4 @@ async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = De
     await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"strategy": strategy, "updatedAt": now}})
     doc["strategy"] = strategy
     enriched = [_enrich_item(i) for i in doc.get("items", [])]
-    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "proximity")))
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))

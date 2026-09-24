@@ -35,7 +35,7 @@ class WatchlistOut(BaseModel):
     id: str
     userId: str
     name: str
-    sortPreference: str = "proximity"
+    sortPreference: str = "alphabetical"
     strategy: str = "orb_vwap"
     createdAt: datetime
     updatedAt: datetime
