@@ -140,13 +140,24 @@ def _resolve_telegram_title(chat_id: str) -> str | None:
     return None
 
 
+async def _get_channel_doc(db, user_id: str) -> dict | None:
+    """Fetch user_settings doc for strategy_notifications.
+    First tries user-scoped doc, then falls back to any global (userId-less) doc.
+    This handles docs seeded directly into Mongo without a userId."""
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    if doc is None:
+        # Fall back to global doc (no userId) – e.g. seeded via mongosh
+        doc = await db.user_settings.find_one({"type": "strategy_notifications", "userId": {"$exists": False}})
+    return doc
+
+
 @router.get("/strategy-channels", response_model=StrategyNotificationsResponse)
 async def get_strategy_channels(
     current_user: dict = Depends(get_current_user),
 ) -> StrategyNotificationsResponse:
     db = get_db()
     user_id = str(current_user["_id"])
-    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    doc = await _get_channel_doc(db, user_id)
     enabled_set = _get_user_enabled_set(user_id, doc)
     channels, channel_names = _get_strategy_channels(doc)
 
@@ -177,7 +188,7 @@ async def update_strategy_channel(
 
     db = get_db()
     user_id = str(current_user["_id"])
-    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    doc = await _get_channel_doc(db, user_id)
     enabled_set = _get_user_enabled_set(user_id, doc)
     channels, channel_names = _get_strategy_channels(doc)
 
