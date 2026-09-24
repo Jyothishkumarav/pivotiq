@@ -798,7 +798,7 @@ export default function WatchlistDetailScreen() {
           }}
         >
           <View style={{ gap: spacing.xs }}>
-            <Pressable onPress={() => router.push("/(tabs)/watchlists")}>
+            <Pressable onPress={() => router.push("/watchlists")}>
               <Text variant="caption" tone="accent">
                 ← All watchlists
               </Text>

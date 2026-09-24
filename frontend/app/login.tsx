@@ -37,7 +37,7 @@ export default function LoginScreen() {
     try {
       await login(username.trim(), password);
       setIsModalVisible(false);
-      router.replace("/(tabs)/search");
+      router.replace("/search");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Login failed. Check your credentials.");
     } finally {

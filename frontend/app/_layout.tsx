@@ -31,9 +31,9 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       }
     } else if (status === "authenticated" && inAuthGroup) {
       if (Platform.OS === "web" && typeof window !== "undefined") {
-        window.location.replace("/(tabs)/search");
+        window.location.replace("/search");
       } else {
-        router.replace("/(tabs)/search");
+        router.replace("/search");
       }
     }
   }, [status, segments, router]);

@@ -8,16 +8,16 @@ import { useAuthStore } from "@/store/authStore";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
 
 interface NavItem {
-  href: "/(tabs)/search" | "/(tabs)/watchlists" | "/(tabs)/alerts" | "/(tabs)/portfolio";
+  href: "/search" | "/watchlists" | "/alerts" | "/portfolio";
   label: string;
   key: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/(tabs)/search", label: "Search", key: "search" },
-  { href: "/(tabs)/watchlists", label: "Watchlists", key: "watchlists" },
-  { href: "/(tabs)/alerts", label: "Alerts", key: "alerts" },
-  { href: "/(tabs)/portfolio", label: "Portfolio", key: "portfolio" },
+  { href: "/search", label: "Search", key: "search" },
+  { href: "/watchlists", label: "Watchlists", key: "watchlists" },
+  { href: "/alerts", label: "Alerts", key: "alerts" },
+  { href: "/portfolio", label: "Portfolio", key: "portfolio" },
 ];
 
 function DataSourceToggle() {
@@ -115,7 +115,7 @@ export function WebTopNav() {
     <View style={styles.navOuter}>
       <View style={styles.navInner}>
         <Pressable
-          onPress={() => router.push("/(tabs)/search")}
+          onPress={() => router.push("/search")}
           style={styles.brandRow}
         >
           <View style={styles.brandDot} />
