@@ -129,7 +129,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           }}
         >
           {/* Symbol + intraday badge */}
-          <View style={{ flex: 1.4, gap: 2 }}>
+          <View style={{ flex: 1.25, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle">{item.symbol}</Text>
@@ -241,7 +241,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
-          <View style={{ flex: 1.45, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 1.35, alignItems: "flex-end", gap: 2, paddingRight: spacing.sm }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit" || intraday.tradeSetup.status === "pending_entry") ? (
               (() => {
                 const setup = intraday.tradeSetup;
@@ -301,7 +301,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingLeft: spacing.xs }}>
+          <View style={{ flex: 1.0, alignItems: "flex-end", paddingLeft: spacing.xs }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -532,7 +532,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Support column */}
-          <View style={{ flex: 0.85, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
             {item.belowAllSupports ? (
               <View style={{ alignSelf: "flex-end" }}>
                 <Badge label="Below supports" tone="warning" />

@@ -36,18 +36,18 @@ const COLUMN_HEADERS: {
   align: "flex-start" | "flex-end";
   sortable?: boolean;
 }[] = [
-  { key: "symbol", label: "Symbol", flex: 1.4, align: "flex-start", sortable: true },
+  { key: "symbol", label: "Symbol", flex: 1.25, align: "flex-start", sortable: true },
   { key: "ltp", label: "LTP", flex: 0.75, align: "flex-end", sortable: true },
   { key: "dayChange", label: "Day", flex: 0.7, align: "flex-end", sortable: true },
   { key: "symbol", label: "Setup", flex: 0.65, align: "flex-end", sortable: false },
   { key: "symbol", label: "Entry", flex: 0.85, align: "flex-end", sortable: false },
   { key: "symbol", label: "Stop Loss", flex: 1.35, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Status", flex: 0.75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Status", flex: 1.0, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ Entry", flex: 0.7, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ SL", flex: 0.7, align: "flex-end", sortable: false },
   { key: "symbol", label: "Max Run", flex: 0.75, align: "flex-end", sortable: false },
   { key: "symbol", label: "Time", flex: 0.65, align: "flex-end", sortable: false },
-  { key: "support", label: "Support", flex: 0.85, align: "flex-end", sortable: true },
+  { key: "support", label: "Support", flex: 0.75, align: "flex-end", sortable: true },
 ];
 
 /** Column value extractors. `null` values are always pushed to the end regardless of direction. */
