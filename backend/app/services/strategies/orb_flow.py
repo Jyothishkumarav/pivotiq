@@ -140,7 +140,11 @@ def _find_support_entry(
                 triggered = c["close"] > trig_lvl if entry_mode == "close" else c["high"] > trig_lvl
                 if triggered:
                     triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
-                    return trig_lvl, t_stop, cand_idx, triggered_at
+                    return (
+                        trig_lvl, t_stop, cand_idx, triggered_at,
+                        5, "triggered", "Entered",
+                        f"Entered at ₹{trig_lvl:.2f}. Stop ₹{t_stop:.2f}.",
+                    )
                 if c["low"] < t_stop or is_red:
                     candidate = None
                     pullback_count += 1
@@ -160,7 +164,11 @@ def _find_support_entry(
                 triggered = c["close"] < trig_lvl if entry_mode == "close" else c["low"] < trig_lvl
                 if triggered:
                     triggered_at = datetime.fromtimestamp(c["ts"], tz=timezone.utc)
-                    return trig_lvl, t_stop, cand_idx, triggered_at
+                    return (
+                        trig_lvl, t_stop, cand_idx, triggered_at,
+                        5, "triggered", "Entered",
+                        f"Entered at ₹{trig_lvl:.2f}. Stop ₹{t_stop:.2f}.",
+                    )
                 if c["high"] > t_stop or is_green:
                     candidate = None
                     pullback_count += 1
@@ -176,9 +184,24 @@ def _find_support_entry(
 
     if candidate is not None:
         trig_lvl, t_stop, cand_idx = candidate
-        return trig_lvl, t_stop, cand_idx, None
+        c_desc = f"{'Green' if direction == 'buy' else 'Red'} support candle formed at ₹{trig_lvl:.2f}. Watching for price break."
+        return (
+            trig_lvl, t_stop, cand_idx, None,
+            4, "support_formed", "Support Formed", c_desc,
+        )
 
-    return None
+    if pullback_count >= 1:
+        p_ext_str = f"₹{pullback_extreme:.2f}" if pullback_extreme is not None else ""
+        p_desc = f"Pullback active ({pullback_count} bar{'s' if pullback_count > 1 else ''}, extreme {p_ext_str}). Waiting for support candle."
+        return (
+            None, pullback_extreme, None, None,
+            3, "pb_forming", "Wait Support", p_desc,
+        )
+
+    return (
+        None, None, None, None,
+        2, "bo_wait_pb", "BO · Wait PB", "Breakout confirmed. Waiting for pullback to start.",
+    )
 
 
 def _evaluate_index_confluence(
@@ -265,13 +288,18 @@ def compute_setup(
                 breakout_idx, _ = bo
                 support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
                 if support_res is not None:
-                    _, tight_stop, _, _ = support_res
-                    stop_loss = tight_stop
+                    _, tight_stop, _, _, _, _, _, _ = support_res
+                    if tight_stop is not None:
+                        stop_loss = tight_stop
 
         status = "triggered"
+        stage = 5
+        stage_key = "triggered"
+        stage_label = "Entered"
         fill_level = trigger_price if trigger_price is not None else entry
+        stage_desc = f"Entered at support level ₹{fill_level:.2f}. Stop ₹{stop_loss:.2f}."
         rationale = (
-            f"Institutional Flow {action.upper()} triggered at ₹{fill_level:.2f}. "
+            f"Institutional Flow {action.upper()} entered at ₹{fill_level:.2f}. "
             f"Entry ₹{entry:.2f}, Stop ₹{stop_loss:.2f}."
         )
     else:
@@ -285,6 +313,10 @@ def compute_setup(
             sl_wide = stop_loss
             triggered_at, trigger_price = None, None
             status = "waiting"
+            stage = 1
+            stage_key = "wait_orb"
+            stage_label = "Wait BO"
+            stage_desc = f"Price inside opening range ₹{orb_low:.2f}–₹{orb_high:.2f}. Waiting for a decisive break."
             confluence_tag, sizing_mult = "neutral", 1.0
             rationale = (
                 f"Waiting for breakout within morning window (<= 10:30 IST). "
@@ -299,72 +331,77 @@ def compute_setup(
             confluence_tag, sizing_mult = _evaluate_index_confluence(symbol, action, index_snapshots)
 
             support_res = _find_support_entry(monitor, breakout_idx, action, entry_cutoff_ts, entry_mode=entry_mode)
-            if support_res is None:
+            support_trigger_level, tight_stop, support_idx, hist_triggered_at, stage, stage_key, stage_label, stage_desc = support_res
+
+            if stage in (2, 3):
                 triggered_at, trigger_price = None, None
                 entry = orb_level
                 status = "pending_entry"
+                stop_loss = tight_stop if tight_stop is not None else sl_wide
                 rationale = (
                     f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} in morning window. "
-                    f"Watching for pullback and first supporting {'green' if action == 'buy' else 'red'} candle."
+                    f"{stage_desc} Index: {confluence_tag.upper()} ({sizing_mult}R sizing)."
                 )
-            else:
-                support_trigger_level, tight_stop, support_idx, hist_triggered_at = support_res
-                stop_loss = tight_stop
-
-                if hist_triggered_at is not None:
-                    triggered_at = hist_triggered_at
-                    trigger_price = support_trigger_level
-                    entry = orb_level
-                    status = "triggered"
-                    if action == "buy":
-                        mode_desc = "closed above" if entry_mode == "close" else "broke above"
-                        ref_desc = "green supporting candle high"
-                    else:
-                        mode_desc = "closed below" if entry_mode == "close" else "broke below"
-                        ref_desc = "red supporting candle low"
-                    rationale = (
-                        f"Institutional Flow: Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
-                        f"pulled back to ₹{tight_stop:.2f}, and {mode_desc} {ref_desc} at ₹{support_trigger_level:.2f}. "
-                        f"Index: {confluence_tag.upper()} ({sizing_mult}R sizing). Stop ₹{stop_loss:.2f}."
+            elif stage == 4:
+                entry = orb_level
+                stop_loss = tight_stop if tight_stop is not None else sl_wide
+                assert support_trigger_level is not None
+                if entry_mode == "touch":
+                    ltp_crossed = (
+                        (action == "buy" and current_price > support_trigger_level) or
+                        (action == "sell" and current_price < support_trigger_level)
                     )
-                else:
-                    if entry_mode == "touch":
-                        ltp_crossed = (
-                            (action == "buy" and current_price > support_trigger_level) or
-                            (action == "sell" and current_price < support_trigger_level)
+                    if ltp_crossed:
+                        triggered_at = datetime.now(tz=timezone.utc)
+                        trigger_price = support_trigger_level
+                        status = "triggered"
+                        stage = 5
+                        stage_key = "triggered"
+                        stage_label = "Entered"
+                        ref_desc = "green supporting candle high" if action == "buy" else "red supporting candle low"
+                        action_word = "broke above" if action == "buy" else "broke below"
+                        stage_desc = f"Entered: LTP {action_word} {ref_desc} ₹{support_trigger_level:.2f}. Stop ₹{stop_loss:.2f}."
+                        rationale = (
+                            f"Institutional Flow: Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                            f"pulled back to ₹{stop_loss:.2f}, and LTP {action_word} {ref_desc} ₹{support_trigger_level:.2f}. "
+                            f"Index: {confluence_tag.upper()} ({sizing_mult}R sizing). Stop ₹{stop_loss:.2f}."
                         )
-                        if ltp_crossed:
-                            triggered_at = datetime.now(tz=timezone.utc)
-                            trigger_price = support_trigger_level
-                            entry = orb_level
-                            status = "triggered"
-                            ref_desc = "green supporting candle high" if action == "buy" else "red supporting candle low"
-                            action_word = "broke above" if action == "buy" else "broke below"
-                            rationale = (
-                                f"Institutional Flow: Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
-                                f"pulled back to ₹{tight_stop:.2f}, and LTP {action_word} {ref_desc} ₹{support_trigger_level:.2f}. "
-                                f"Index: {confluence_tag.upper()} ({sizing_mult}R sizing). Stop ₹{stop_loss:.2f}."
-                            )
-                        else:
-                            triggered_at, trigger_price = None, support_trigger_level
-                            entry = orb_level
-                            status = "pending_entry"
-                            ref_desc = "Green" if action == "buy" else "Red"
-                            action_word = "cross above" if action == "buy" else "break below"
-                            rationale = (
-                                f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} in morning window. "
-                                f"{ref_desc} supporting candle formed — waiting for LTP to {action_word} ₹{support_trigger_level:.2f}."
-                            )
                     else:
                         triggered_at, trigger_price = None, support_trigger_level
-                        entry = orb_level
                         status = "pending_entry"
                         ref_desc = "Green" if action == "buy" else "Red"
-                        action_word = "close above" if action == "buy" else "close below"
+                        action_word = "cross above" if action == "buy" else "break below"
+                        stage_desc = f"{ref_desc} support candle formed at ₹{support_trigger_level:.2f}. Waiting for LTP to {action_word}."
                         rationale = (
                             f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} in morning window. "
-                            f"{ref_desc} supporting candle formed — waiting for 3m candle to {action_word} ₹{support_trigger_level:.2f}."
+                            f"{ref_desc} supporting candle formed — waiting for LTP to {action_word} ₹{support_trigger_level:.2f}."
                         )
+                else:
+                    triggered_at, trigger_price = None, support_trigger_level
+                    status = "pending_entry"
+                    ref_desc = "Green" if action == "buy" else "Red"
+                    action_word = "close above" if action == "close" else "close below"
+                    stage_desc = f"{ref_desc} support candle formed at ₹{support_trigger_level:.2f}. Waiting for 3m candle to {action_word}."
+                    rationale = (
+                        f"Broke {'above' if action == 'buy' else 'below'} ORB ₹{orb_level:.2f} in morning window. "
+                        f"{ref_desc} supporting candle formed — waiting for 3m candle to {action_word} ₹{support_trigger_level:.2f}."
+                    )
+            elif stage == 5:
+                triggered_at = hist_triggered_at
+                trigger_price = support_trigger_level
+                entry = orb_level
+                stop_loss = tight_stop if tight_stop is not None else sl_wide
+                status = "triggered"
+                mode_desc = "closed above" if entry_mode == "close" else "broke above"
+                ref_desc = "green supporting candle high" if action == "buy" else "red supporting candle low"
+                if action == "sell":
+                    mode_desc = "closed below" if entry_mode == "close" else "broke below"
+                stage_desc = f"Entered at ₹{trigger_price:.2f}. Stop ₹{stop_loss:.2f}."
+                rationale = (
+                    f"Institutional Flow: Broke ORB {'high' if action == 'buy' else 'low'} ₹{orb_level:.2f}, "
+                    f"pulled back to ₹{stop_loss:.2f}, and {mode_desc} {ref_desc} at ₹{support_trigger_level:.2f}. "
+                    f"Index: {confluence_tag.upper()} ({sizing_mult}R sizing). Stop ₹{stop_loss:.2f}."
+                )
 
     # Risk and target
     calc_base = trigger_price if (status == "triggered" and trigger_price is not None) else entry
@@ -401,6 +438,10 @@ def compute_setup(
         entryMode=entry_mode,  # type: ignore[arg-type]
         indexConfluence=confluence_tag,  # type: ignore[arg-type]
         sizingMultiplier=sizing_mult,
+        stage=stage,
+        stageKey=stage_key,  # type: ignore[arg-type]
+        stageLabel=stage_label,
+        stageDesc=stage_desc,
     )
 
     freeze_payload = None

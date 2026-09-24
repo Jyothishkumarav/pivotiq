@@ -105,6 +105,10 @@ class TradeSetup(BaseModel):
     maxFavorablePercent: float | None = None
     maxFavorableR: float | None = None
     maxFavorableTime: str | None = None
+    stage: int | None = None
+    stageKey: Literal["wait_orb", "bo_wait_pb", "pb_forming", "support_formed", "triggered", "sl_hit"] | None = None
+    stageLabel: str | None = None
+    stageDesc: str | None = None
 
 
 class IntradaySnapshot(BaseModel):

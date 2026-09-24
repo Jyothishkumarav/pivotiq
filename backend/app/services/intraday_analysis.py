@@ -567,6 +567,10 @@ def _build_trade_setup(
     rr = round(reward / risk, 2) if risk > 0 else 0.0
 
     status = "sl_hit" if sl_hit_at is not None else "triggered" if triggered_at is not None else "waiting"
+    stage = 6 if status == "sl_hit" else (5 if status == "triggered" else 1)
+    stage_key = "sl_hit" if status == "sl_hit" else ("triggered" if status == "triggered" else "wait_orb")
+    stage_label = "SL Hit" if status == "sl_hit" else ("Entered" if status == "triggered" else "Wait BO")
+    stage_desc = rationale
 
     return TradeSetup(
         action=action,  # type: ignore[arg-type]
@@ -580,6 +584,10 @@ def _build_trade_setup(
         rationale=rationale,
         triggeredAt=triggered_at,
         slHitAt=sl_hit_at,
+        stage=stage,
+        stageKey=stage_key,  # type: ignore[arg-type]
+        stageLabel=stage_label,
+        stageDesc=stage_desc,
     )
 
 
@@ -1119,6 +1127,10 @@ def _compute_pluggable_setup(
                         msl_hit_at = updated["sl_hit_at"]
                 setup.slHitAt = msl_hit_at
                 setup.status = "sl_hit"
+                setup.stage = 6
+                setup.stageKey = "sl_hit"
+                setup.stageLabel = "SL Hit"
+                setup.stageDesc = f"Macro stop loss hit at {msl_hit_at.astimezone(IST).strftime('%H:%M')}."
             else:
                 # MSL was never breached. If a legacy record prematurely recorded tight-SL hit, self-heal and clear it:
                 if frozen is not None and frozen.get("sl_hit_at") is not None:
@@ -1199,6 +1211,10 @@ def _compute_pluggable_setup(
                         msl_hit_at = updated["sl_hit_at"]
                 setup.slHitAt = msl_hit_at
                 setup.status = "sl_hit"
+                setup.stage = 6
+                setup.stageKey = "sl_hit"
+                setup.stageLabel = "SL Hit"
+                setup.stageDesc = f"Macro stop loss hit at {msl_hit_at.astimezone(IST).strftime('%H:%M')}."
             else:
                 if frozen is not None and frozen.get("sl_hit_at") is not None:
                     try:

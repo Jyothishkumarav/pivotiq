@@ -256,6 +256,75 @@ function TradeSetupCard({ setup, currentPrice }: { setup: TradeSetup; currentPri
           </Text>
         </View>
       </View>
+      {setup.stage && (
+        <View style={{ gap: spacing.xs, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.borderSubtle }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text variant="caption" tone="muted" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Sequence of Events
+            </Text>
+            <Text variant="caption" style={{ fontWeight: "700", color: setup.stage === 6 ? colors.negative : setup.stage === 5 ? colors.positive : colors.accent }}>
+              Stage {setup.stage}: {setup.stageLabel}
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+            {[
+              { num: 1, label: "Wait BO" },
+              { num: 2, label: "BO Wait PB" },
+              { num: 3, label: "Wait Support" },
+              { num: 4, label: "Support Formed" },
+              { num: 5, label: "Entered" },
+            ].map((st) => {
+              const isCurrent = setup.stage === st.num;
+              const isPassed = (setup.stage ?? 0) > st.num && setup.stage !== 6;
+              const isSl = setup.stage === 6;
+              return (
+                <View
+                  key={st.num}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 4,
+                    paddingHorizontal: 2,
+                    borderRadius: 4,
+                    alignItems: "center",
+                    backgroundColor: isCurrent
+                      ? (isSl ? "rgba(239, 68, 68, 0.2)" : "rgba(99, 102, 241, 0.25)")
+                      : isPassed
+                      ? "rgba(34, 197, 94, 0.15)"
+                      : "rgba(255, 255, 255, 0.05)",
+                    borderWidth: 1,
+                    borderColor: isCurrent
+                      ? (isSl ? "rgba(239, 68, 68, 0.5)" : "rgba(99, 102, 241, 0.6)")
+                      : isPassed
+                      ? "rgba(34, 197, 94, 0.3)"
+                      : "transparent",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: isCurrent ? "700" : "500",
+                      color: isCurrent
+                        ? (isSl ? "#f87171" : "#818cf8")
+                        : isPassed
+                        ? "#4ade80"
+                        : colors.textMuted,
+                      textAlign: "center",
+                    }}
+                    numberOfLines={1}
+                  >
+                    {st.num}. {st.label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          {setup.stageDesc && (
+            <Text variant="caption" tone="secondary" style={{ fontSize: 11, fontStyle: "italic" }}>
+              {setup.stageDesc}
+            </Text>
+          )}
+        </View>
+      )}
       <Text variant="caption" tone="secondary">
         {setup.rationale}
       </Text>

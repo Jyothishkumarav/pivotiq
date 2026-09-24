@@ -193,6 +193,10 @@ export interface TradeSetup {
   maxFavorablePercent?: number | null;
   maxFavorableR?: number | null;
   maxFavorableTime?: string | null;
+  stage?: number | null;
+  stageKey?: "wait_orb" | "bo_wait_pb" | "pb_forming" | "support_formed" | "triggered" | "sl_hit" | null;
+  stageLabel?: string | null;
+  stageDesc?: string | null;
 }
 
 export interface IntradaySnapshot {

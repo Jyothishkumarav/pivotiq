@@ -266,9 +266,75 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 0.65, alignItems: "flex-end", paddingLeft: spacing.sm }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingLeft: spacing.xs }}>
             {intraday?.tradeSetup ? (
               (() => {
+                if (intraday.tradeSetup.stageLabel) {
+                  const stage = intraday.tradeSetup.stage ?? 1;
+                  let bg = "rgba(107, 114, 128, 0.15)";
+                  let border = "rgba(107, 114, 128, 0.35)";
+                  let textCol = "#9ca3af";
+
+                  if (stage === 1) {
+                    bg = "rgba(107, 114, 128, 0.15)";
+                    border = "rgba(107, 114, 128, 0.35)";
+                    textCol = "#9ca3af";
+                  } else if (stage === 2) {
+                    bg = "rgba(56, 189, 248, 0.15)";
+                    border = "rgba(56, 189, 248, 0.35)";
+                    textCol = "#38bdf8";
+                  } else if (stage === 3) {
+                    bg = "rgba(251, 191, 36, 0.15)";
+                    border = "rgba(251, 191, 36, 0.35)";
+                    textCol = "#fbbf24";
+                  } else if (stage === 4) {
+                    bg = "rgba(168, 85, 247, 0.15)";
+                    border = "rgba(168, 85, 247, 0.35)";
+                    textCol = "#c084fc";
+                  } else if (stage === 5) {
+                    bg = "rgba(34, 197, 94, 0.15)";
+                    border = "rgba(34, 197, 94, 0.35)";
+                    textCol = "#4ade80";
+                  } else if (stage === 6) {
+                    bg = "rgba(239, 68, 68, 0.15)";
+                    border = "rgba(239, 68, 68, 0.35)";
+                    textCol = "#f87171";
+                  }
+
+                  return (
+                    <View style={{ alignItems: "flex-end", gap: 2 }}>
+                      <View
+                        style={{
+                          backgroundColor: bg,
+                          borderColor: border,
+                          borderWidth: 1,
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 4,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: textCol,
+                            fontSize: 10,
+                            fontWeight: "700",
+                            letterSpacing: 0.3,
+                            textTransform: "uppercase",
+                          }}
+                          numberOfLines={1}
+                        >
+                          {intraday.tradeSetup.stageLabel}
+                        </Text>
+                      </View>
+                      {stage === 4 && intraday.tradeSetup.triggerPrice ? (
+                        <Text variant="mono" tone="muted" style={{ fontSize: 9 }}>
+                          brk ₹{intraday.tradeSetup.triggerPrice.toFixed(2)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  );
+                }
+
                 if (intraday.tradeSetup.status === "sl_hit") {
                   return (
                     <Text variant="caption" tone="negative" numberOfLines={1}>

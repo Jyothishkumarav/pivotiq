@@ -222,7 +222,7 @@ function ChannelRow({
                     style={{
                       fontSize: 12,
                       fontWeight: isSelected ? "600" : "400",
-                      color: isSelected ? colors.accent : colors.text,
+                      color: isSelected ? colors.accent : colors.textPrimary,
                     }}
                   >
                     {c.name}
@@ -290,7 +290,7 @@ function ChannelRow({
                     borderWidth: 1,
                     borderColor: colors.border,
                     backgroundColor: colors.background,
-                    color: colors.text,
+                    color: colors.textPrimary,
                     paddingHorizontal: spacing.sm,
                     fontSize: 13,
                     ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
