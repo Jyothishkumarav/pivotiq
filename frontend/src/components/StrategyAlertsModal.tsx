@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   Platform,
@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, LoadingBlock, Text } from "@/components/ui";
-import { settingsApi, StrategyNotificationItem } from "@/api/settings";
+import { settingsApi, StrategyNotificationItem, TelegramChannelOption } from "@/api/settings";
 import { colors, radius, spacing } from "@/theme/tokens";
 
 interface Props {
@@ -37,41 +37,78 @@ const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
   orb_flow: { glyph: "⚡", color: "#7B61FF" },
 };
 
-// ─── Per-strategy channel ID row ──────────────────────────────────────────────
+const DEFAULT_AVAILABLE_CHANNELS: TelegramChannelOption[] = [
+  { id: "-1004449069761", name: "Pivotiq_Tuned" },
+  { id: "-1004294022390", name: "PivotIQ_15_Mins_Break" },
+  { id: "-1004440440854", name: "Pivotiqupdate" },
+];
+
+// ─── Per-strategy channel selector ───────────────────────────────────────────
 function ChannelRow({
   stratKey,
   currentChannelId,
   currentChannelName,
+  availableChannels = [],
 }: {
   stratKey: string;
   currentChannelId?: string | null;
   currentChannelName?: string | null;
+  availableChannels?: TelegramChannelOption[];
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
-  const [draft, setDraft] = useState(currentChannelId ?? "");
+  const [customMode, setCustomMode] = useState(false);
+  const [customDraft, setCustomDraft] = useState(currentChannelId ?? "");
   const [saved, setSaved] = useState(false);
 
+  useEffect(() => {
+    setCustomDraft(currentChannelId ?? "");
+  }, [currentChannelId]);
+
   const channelMutation = useMutation({
-    mutationFn: ({ key, id }: { key: string; id: string | null }) =>
-      settingsApi.updateStrategyChannel(key, id),
+    mutationFn: ({
+      key,
+      id,
+      name,
+    }: {
+      key: string;
+      id: string | null;
+      name?: string | null;
+    }) => settingsApi.updateStrategyChannel(key, id, name),
     onSuccess: (data) => {
       queryClient.setQueryData(["strategy-channels"], data);
+      queryClient.setQueryData(["strategy-notifications"], data);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     },
   });
 
-  const handleSave = () => {
-    channelMutation.mutate({ key: stratKey, id: draft.trim() || null });
+  const channelsList =
+    availableChannels.length > 0 ? availableChannels : DEFAULT_AVAILABLE_CHANNELS;
+
+  const matched = channelsList.find(
+    (c) =>
+      c.id === currentChannelId ||
+      (currentChannelName && c.name.toLowerCase() === currentChannelName.toLowerCase())
+  );
+
+  const displayName =
+    currentChannelName || matched?.name || (currentChannelId ? currentChannelId : "Default Channel");
+
+  const handleSelectChannel = (channel: TelegramChannelOption) => {
+    setCustomMode(false);
+    channelMutation.mutate({ key: stratKey, id: channel.id, name: channel.name });
   };
 
-  const handleClear = () => {
-    setDraft("");
-    channelMutation.mutate({ key: stratKey, id: null });
+  const handleCustomSave = () => {
+    const trimmed = customDraft.trim();
+    if (!trimmed) {
+      setCustomMode(false);
+      channelMutation.mutate({ key: stratKey, id: null });
+      return;
+    }
+    channelMutation.mutate({ key: stratKey, id: trimmed });
   };
-
-  const hasValue = !!currentChannelId;
 
   return (
     <View
@@ -80,6 +117,7 @@ function ChannelRow({
         borderTopWidth: 1,
         borderTopColor: colors.borderSubtle,
         paddingTop: spacing.xs,
+        gap: spacing.xs,
       }}
     >
       <Pressable
@@ -89,51 +127,51 @@ function ChannelRow({
           alignItems: "center",
           gap: spacing.xs,
           paddingVertical: 4,
-          paddingHorizontal: 2,
+          paddingHorizontal: 6,
           borderRadius: radius.sm,
-          backgroundColor: hovered ? `${colors.accent}10` : "transparent",
+          backgroundColor: hovered ? `${colors.accent}15` : "transparent",
+          alignSelf: "flex-start",
         })}
       >
         <Text style={{ fontSize: 11, color: colors.textSecondary }}>
           {expanded ? "▾" : "▸"}
         </Text>
-        <Text variant="caption" tone={hasValue ? "accent" : "muted"}>
-          Telegram Channel
+        <Text variant="caption" tone="secondary">
+          Telegram Channel:
         </Text>
-        {hasValue ? (
-          <View
+        <View
+          style={{
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 99,
+            backgroundColor: `${colors.accent}20`,
+            borderWidth: 1,
+            borderColor: `${colors.accent}45`,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          <Text style={{ fontSize: 11 }}>📢</Text>
+          <Text
             style={{
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: 99,
-              backgroundColor: `${colors.accent}20`,
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 4,
+              fontSize: 12,
+              color: colors.accent,
+              fontWeight: "600",
             }}
           >
-            <Text style={{ fontSize: 11 }}>📢</Text>
-            <Text
-              style={{
-                fontSize: 11,
-                color: colors.accent,
-                fontWeight: "600",
-              }}
-            >
-              {currentChannelName || currentChannelId}
-            </Text>
-          </View>
-        ) : (
-          <Text variant="caption" tone="muted" style={{ fontStyle: "italic" } as any}>
-            (global default)
+            {displayName}
           </Text>
-        )}
+        </View>
+        <Text style={{ fontSize: 10, color: colors.textSecondary }}>
+          {expanded ? "▲ Change" : "▼ Change"}
+        </Text>
       </Pressable>
 
       {expanded && (
         <View
           style={{
-            marginTop: spacing.xs,
+            marginTop: 4,
             padding: spacing.sm,
             borderRadius: radius.md,
             backgroundColor: colors.surfaceElevated,
@@ -143,84 +181,155 @@ function ChannelRow({
           }}
         >
           <Text variant="caption" tone="secondary">
-            Enter the Telegram Chat/Channel ID (e.g.{" "}
-            <Text
-              variant="caption"
-              style={{
-                color: colors.accent,
-                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
-              }}
-            >
-              -1001234567890
-            </Text>
-            ). Leave blank to use the global default.
+            Select destination Telegram channel for alerts:
           </Text>
 
-          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
-            <TextInput
-              value={draft}
-              onChangeText={(t) => {
-                setDraft(t);
-                setSaved(false);
-              }}
-              placeholder="-100xxxxxxxxxx"
-              placeholderTextColor={colors.textSecondary}
-              style={{
-                flex: 1,
-                height: 36,
+          {/* Channel selector pills */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>
+            {channelsList.map((c) => {
+              const isSelected =
+                currentChannelId === c.id ||
+                (!currentChannelId && matched?.id === c.id) ||
+                (currentChannelName && c.name.toLowerCase() === currentChannelName.toLowerCase());
+
+              return (
+                <Pressable
+                  key={c.id}
+                  onPress={() => handleSelectChannel(c)}
+                  disabled={channelMutation.isPending}
+                  style={({ hovered }: any) => ({
+                    paddingHorizontal: spacing.sm,
+                    paddingVertical: 6,
+                    borderRadius: radius.sm,
+                    borderWidth: 1,
+                    borderColor: isSelected
+                      ? colors.accent
+                      : hovered
+                      ? colors.border
+                      : colors.borderSubtle,
+                    backgroundColor: isSelected
+                      ? `${colors.accent}25`
+                      : hovered
+                      ? colors.surface
+                      : colors.background,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                  })}
+                >
+                  <Text style={{ fontSize: 11 }}>📢</Text>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: isSelected ? "600" : "400",
+                      color: isSelected ? colors.accent : colors.text,
+                    }}
+                  >
+                    {c.name}
+                  </Text>
+                  {isSelected && (
+                    <Text style={{ fontSize: 11, color: colors.accent, fontWeight: "700" }}>
+                      ✓
+                    </Text>
+                  )}
+                </Pressable>
+              );
+            })}
+
+            {/* Custom ID toggle */}
+            <Pressable
+              onPress={() => setCustomMode((v) => !v)}
+              style={({ hovered }: any) => ({
+                paddingHorizontal: spacing.sm,
+                paddingVertical: 6,
                 borderRadius: radius.sm,
                 borderWidth: 1,
-                borderColor: colors.border,
-                backgroundColor: colors.background,
-                color: colors.text,
-                paddingHorizontal: spacing.sm,
-                fontSize: 13,
-                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
-              }}
-            />
-            <Pressable
-              onPress={handleSave}
-              disabled={channelMutation.isPending}
-              style={({ hovered }: any) => ({
-                paddingHorizontal: spacing.md,
-                height: 36,
-                borderRadius: radius.sm,
-                backgroundColor: saved
-                  ? colors.positive
+                borderColor: customMode ? colors.accent : hovered ? colors.border : colors.borderSubtle,
+                backgroundColor: customMode
+                  ? `${colors.accent}15`
                   : hovered
-                  ? `${colors.accent}cc`
-                  : colors.accent,
-                justifyContent: "center",
+                  ? colors.surface
+                  : colors.background,
+                flexDirection: "row",
                 alignItems: "center",
-                opacity: channelMutation.isPending ? 0.6 : 1,
+                gap: 4,
               })}
             >
-              <Text style={{ fontSize: 12, color: "#fff", fontWeight: "600" }}>
-                {saved ? "✓ Saved" : channelMutation.isPending ? "Saving…" : "Save"}
+              <Text style={{ fontSize: 11 }}>✏️</Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: customMode ? "600" : "400",
+                  color: customMode ? colors.accent : colors.textSecondary,
+                }}
+              >
+                Custom ID…
               </Text>
             </Pressable>
-            {hasValue && (
-              <Pressable
-                onPress={handleClear}
-                style={({ hovered }: any) => ({
-                  paddingHorizontal: spacing.sm,
-                  height: 36,
-                  borderRadius: radius.sm,
-                  borderWidth: 1,
-                  borderColor: colors.borderSubtle,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  backgroundColor: hovered ? `${colors.negative}15` : "transparent",
-                })}
-              >
-                <Text style={{ fontSize: 12, color: colors.textSecondary }}>Clear</Text>
-              </Pressable>
-            )}
           </View>
 
+          {/* Custom ID input */}
+          {customMode && (
+            <View style={{ marginTop: spacing.xs, gap: spacing.xs }}>
+              <Text variant="caption" tone="secondary">
+                Enter Telegram Chat/Channel ID (e.g. -1001234567890):
+              </Text>
+              <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+                <TextInput
+                  value={customDraft}
+                  onChangeText={(t) => {
+                    setCustomDraft(t);
+                    setSaved(false);
+                  }}
+                  placeholder="-100xxxxxxxxxx"
+                  placeholderTextColor={colors.textSecondary}
+                  style={{
+                    flex: 1,
+                    height: 36,
+                    borderRadius: radius.sm,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: colors.background,
+                    color: colors.text,
+                    paddingHorizontal: spacing.sm,
+                    fontSize: 13,
+                    ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
+                  }}
+                />
+                <Pressable
+                  onPress={handleCustomSave}
+                  disabled={channelMutation.isPending}
+                  style={({ hovered }: any) => ({
+                    paddingHorizontal: spacing.md,
+                    height: 36,
+                    borderRadius: radius.sm,
+                    backgroundColor: saved
+                      ? colors.positive
+                      : hovered
+                      ? `${colors.accent}cc`
+                      : colors.accent,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    opacity: channelMutation.isPending ? 0.6 : 1,
+                  })}
+                >
+                  <Text style={{ fontSize: 12, color: "#fff", fontWeight: "600" }}>
+                    {saved ? "✓ Saved" : channelMutation.isPending ? "Saving…" : "Save"}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          {saved && (
+            <Text variant="caption" style={{ color: colors.positive }}>
+              ✓ Channel updated successfully
+            </Text>
+          )}
+
           {channelMutation.isError && (
-            <Text variant="caption" style={{ color: colors.negative } as any}>
-              Failed to save. Please try again.
+            <Text variant="caption" style={{ color: colors.negative }}>
+              Failed to save channel. Please try again.
             </Text>
           )}
         </View>
@@ -278,13 +387,25 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
   );
   const enabledCount = strategies.filter((s) => s.enabled).length;
 
+  const channelSource =
+    channelData?.strategies && channelData.strategies.length > 0
+      ? channelData.strategies
+      : notifData?.strategies ?? [];
+
   const channelMap: Record<string, { id: string | null | undefined; name: string | null | undefined }> =
     Object.fromEntries(
-      (channelData?.strategies ?? []).map((s) => [
+      channelSource.map((s) => [
         s.key,
         { id: s.telegramChannelId, name: s.telegramChannelName },
       ])
     );
+
+  const availableChannels: TelegramChannelOption[] =
+    channelData?.availableChannels && channelData.availableChannels.length > 0
+      ? channelData.availableChannels
+      : notifData?.availableChannels && notifData.availableChannels.length > 0
+      ? notifData.availableChannels
+      : DEFAULT_AVAILABLE_CHANNELS;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -435,6 +556,7 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
                       stratKey={strat.key}
                       currentChannelId={channelInfo?.id}
                       currentChannelName={channelInfo?.name}
+                      availableChannels={availableChannels}
                     />
                   </View>
                 );

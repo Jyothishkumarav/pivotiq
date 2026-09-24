@@ -33,8 +33,14 @@ class StrategyNotificationItem(BaseModel):
     telegramChannelName: str | None = None  # human-readable group/channel title
 
 
+class TelegramChannelOption(BaseModel):
+    id: str
+    name: str
+
+
 class StrategyNotificationsResponse(BaseModel):
     strategies: list[StrategyNotificationItem]
+    availableChannels: list[TelegramChannelOption] = []
 
 
 class StrategyNotificationUpdate(BaseModel):

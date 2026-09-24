@@ -58,28 +58,42 @@ def get_user_enabled_strategies(user_id: Any | None = None) -> set[str]:
     return set(settings.notification_enabled_strategies)
 
 
+DEFAULT_STRATEGY_CHANNELS: dict[str, str] = {
+    "orb_flow": "-1004449069761",
+    "orb_pullback_support": "-1004440440854",
+    "orb_pullback": "-1004294022390",
+}
+
+
 def get_strategy_telegram_channel(strategy: str, user_id: Any | None = None) -> str:
     """Return the Telegram chat_id to use for this strategy.
     Prefers a per-strategy override stored in user_settings.strategyChannels;
-    falls back to the global NOTIFICATION_TELEGRAM_CHAT_ID env variable."""
+    falls back to DEFAULT_STRATEGY_CHANNELS, then to global NOTIFICATION_TELEGRAM_CHAT_ID."""
     settings = get_settings()
-    global_chat_id = settings.notification_telegram_chat_id
-
-    if not user_id:
-        return global_chat_id
+    fallback_chat_id = DEFAULT_STRATEGY_CHANNELS.get(strategy) or settings.notification_telegram_chat_id
 
     try:
+        from bson import ObjectId
         from app.services.intraday_analysis import get_trigger_collection
         db = get_trigger_collection().database
-        doc = db.user_settings.find_one({"userId": str(user_id), "type": "strategy_notifications"})
-        if doc and "strategyChannels" in doc:
+        query: dict[str, Any] = {"type": "strategy_notifications"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "strategy_notifications"})
+        if doc and "strategyChannels" in doc and isinstance(doc["strategyChannels"], dict):
             channel = doc["strategyChannels"].get(strategy)
             if channel:
                 return channel
     except Exception as exc:
         logger.warning("Could not read per-strategy channel for %s: %s", strategy, exc)
 
-    return global_chat_id
+    return fallback_chat_id
 
 
 def _format_index_line(name: str, snap: IntradaySnapshot) -> str:

@@ -6,6 +6,11 @@ interface DataSourceResponse {
   mode: DataSourceMode;
 }
 
+export interface TelegramChannelOption {
+  id: string;
+  name: string;
+}
+
 export interface StrategyNotificationItem {
   key: string;
   label: string;
@@ -16,6 +21,7 @@ export interface StrategyNotificationItem {
 
 export interface StrategyNotificationsResponse {
   strategies: StrategyNotificationItem[];
+  availableChannels?: TelegramChannelOption[];
 }
 
 export const settingsApi = {
@@ -27,7 +33,11 @@ export const settingsApi = {
     apiClient.put<StrategyNotificationsResponse>("/settings/strategy-notifications", { key, enabled }),
   getStrategyChannels: () =>
     apiClient.get<StrategyNotificationsResponse>("/settings/strategy-channels"),
-  updateStrategyChannel: (key: string, telegramChannelId: string | null) =>
-    apiClient.put<StrategyNotificationsResponse>("/settings/strategy-channels", { key, telegramChannelId }),
+  updateStrategyChannel: (key: string, telegramChannelId: string | null, telegramChannelName?: string | null) =>
+    apiClient.put<StrategyNotificationsResponse>("/settings/strategy-channels", {
+      key,
+      telegramChannelId,
+      telegramChannelName,
+    }),
 };
 

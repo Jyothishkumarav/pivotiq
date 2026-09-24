@@ -13,9 +13,28 @@ from app.schemas.strategy import (
     StrategyNotificationItem,
     StrategyNotificationsResponse,
     StrategyNotificationUpdate,
+    TelegramChannelOption,
 )
 from app.services import market_data
 from app.services.strategies import STRATEGY_NAMES
+
+AVAILABLE_TELEGRAM_CHANNELS: list[TelegramChannelOption] = [
+    TelegramChannelOption(id="-1004449069761", name="Pivotiq_Tuned"),
+    TelegramChannelOption(id="-1004294022390", name="PivotIQ_15_Mins_Break"),
+    TelegramChannelOption(id="-1004440440854", name="Pivotiqupdate"),
+]
+
+DEFAULT_STRATEGY_CHANNELS: dict[str, str] = {
+    "orb_flow": "-1004449069761",
+    "orb_pullback_support": "-1004440440854",
+    "orb_pullback": "-1004294022390",
+}
+
+DEFAULT_STRATEGY_CHANNEL_NAMES: dict[str, str] = {
+    "orb_flow": "Pivotiq_Tuned",
+    "orb_pullback_support": "Pivotiqupdate",
+    "orb_pullback": "PivotIQ_15_Mins_Break",
+}
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(get_current_user)])
 
@@ -56,18 +75,24 @@ async def get_strategy_notifications(
 ) -> StrategyNotificationsResponse:
     db = get_db()
     user_id = str(current_user["_id"])
-    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    doc = await _get_channel_doc(db, user_id)
     enabled_set = _get_user_enabled_set(user_id, doc)
+    channels, channel_names = _get_strategy_channels(doc)
 
     items = [
         StrategyNotificationItem(
             key=s.value,
             label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
             enabled=s.value in enabled_set,
+            telegramChannelId=channels.get(s.value),
+            telegramChannelName=channel_names.get(s.value),
         )
         for s in StrategyName
     ]
-    return StrategyNotificationsResponse(strategies=items)
+    return StrategyNotificationsResponse(
+        strategies=items,
+        availableChannels=AVAILABLE_TELEGRAM_CHANNELS,
+    )
 
 
 @router.put("/strategy-notifications", response_model=StrategyNotificationsResponse)
@@ -84,8 +109,9 @@ async def update_strategy_notification(
 
     db = get_db()
     user_id = str(current_user["_id"])
-    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    doc = await _get_channel_doc(db, user_id)
     enabled_set = _get_user_enabled_set(user_id, doc)
+    channels, channel_names = _get_strategy_channels(doc)
 
     if payload.enabled:
         enabled_set.add(payload.key)
@@ -103,26 +129,37 @@ async def update_strategy_notification(
             key=s.value,
             label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
             enabled=s.value in enabled_set,
+            telegramChannelId=channels.get(s.value),
+            telegramChannelName=channel_names.get(s.value),
         )
         for s in StrategyName
     ]
-    return StrategyNotificationsResponse(strategies=items)
+    return StrategyNotificationsResponse(
+        strategies=items,
+        availableChannels=AVAILABLE_TELEGRAM_CHANNELS,
+    )
 
 
 def _get_strategy_channels(doc: dict | None) -> tuple[dict[str, str], dict[str, str]]:
-    """Return ({strategy_key: channel_id}, {strategy_key: channel_name}) from user_settings doc."""
-    ids = dict(doc["strategyChannels"]) if doc and "strategyChannels" in doc else {}
-    names = dict(doc["strategyChannelNames"]) if doc and "strategyChannelNames" in doc else {}
+    """Return ({strategy_key: channel_id}, {strategy_key: channel_name}) from user_settings doc,
+    falling back to DEFAULT_STRATEGY_CHANNELS."""
+    ids = dict(DEFAULT_STRATEGY_CHANNELS)
+    names = dict(DEFAULT_STRATEGY_CHANNEL_NAMES)
+    if doc and "strategyChannels" in doc and isinstance(doc["strategyChannels"], dict):
+        ids.update(doc["strategyChannels"])
+    if doc and "strategyChannelNames" in doc and isinstance(doc["strategyChannelNames"], dict):
+        names.update(doc["strategyChannelNames"])
     return ids, names
 
 
 def _resolve_telegram_title(chat_id: str) -> str | None:
-    """Call Telegram getChat to resolve the group/channel title. Best-effort, returns None on failure."""
-    import requests as _req
-    settings = get_settings()
-    # Reuse bot token from notification-service env via the settings chain
-    # The token lives in TELEGRAM_BOT_TOKEN (notification-service env), forwarded via .env
+    """Resolve Telegram channel title from available list or Telegram API."""
+    for ch in AVAILABLE_TELEGRAM_CHANNELS:
+        if ch.id == chat_id:
+            return ch.name
+
     import os
+    import requests as _req
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         return None
@@ -142,17 +179,20 @@ def _resolve_telegram_title(chat_id: str) -> str | None:
 
 async def _get_channel_doc(db, user_id: str) -> dict | None:
     """Fetch user_settings doc for strategy_notifications.
-    First tries user-scoped doc, then falls back to any global (userId-less/null) doc.
-    This handles docs seeded directly into Mongo without a userId."""
-    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_notifications"})
+    Tries user-scoped doc (str or ObjectId), then falls back to any doc."""
+    from bson import ObjectId
+    conds: list[dict] = [{"userId": user_id}]
+    if ObjectId.is_valid(user_id):
+        conds.append({"userId": ObjectId(user_id)})
+    doc = await db.user_settings.find_one({"type": "strategy_notifications", "$or": conds})
     if doc is None:
-        # Fall back to global doc — userId missing OR null (seeded via mongosh)
         doc = await db.user_settings.find_one({
             "type": "strategy_notifications",
             "$or": [{"userId": {"$exists": False}}, {"userId": None}, {"userId": ""}],
         })
+    if doc is None:
+        doc = await db.user_settings.find_one({"type": "strategy_notifications"})
     return doc
-
 
 
 @router.get("/strategy-channels", response_model=StrategyNotificationsResponse)
@@ -175,7 +215,10 @@ async def get_strategy_channels(
         )
         for s in StrategyName
     ]
-    return StrategyNotificationsResponse(strategies=items)
+    return StrategyNotificationsResponse(
+        strategies=items,
+        availableChannels=AVAILABLE_TELEGRAM_CHANNELS,
+    )
 
 
 @router.put("/strategy-channels", response_model=StrategyNotificationsResponse)
@@ -199,7 +242,6 @@ async def update_strategy_channel(
     if payload.telegramChannelId:
         cid = payload.telegramChannelId.strip()
         channels[payload.key] = cid
-        # Resolve human-readable name: prefer caller-supplied, else fetch from Telegram
         resolved_name = (
             payload.telegramChannelName.strip()
             if payload.telegramChannelName
@@ -210,8 +252,16 @@ async def update_strategy_channel(
         else:
             channel_names.pop(payload.key, None)
     else:
-        channels.pop(payload.key, None)      # clear → fall back to global default
-        channel_names.pop(payload.key, None)
+        # Fall back to default
+        default_id = DEFAULT_STRATEGY_CHANNELS.get(payload.key)
+        default_name = DEFAULT_STRATEGY_CHANNEL_NAMES.get(payload.key)
+        if default_id:
+            channels[payload.key] = default_id
+            if default_name:
+                channel_names[payload.key] = default_name
+        else:
+            channels.pop(payload.key, None)
+            channel_names.pop(payload.key, None)
 
     await db.user_settings.update_one(
         {"userId": user_id, "type": "strategy_notifications"},
@@ -229,4 +279,7 @@ async def update_strategy_channel(
         )
         for s in StrategyName
     ]
-    return StrategyNotificationsResponse(strategies=items)
+    return StrategyNotificationsResponse(
+        strategies=items,
+        availableChannels=AVAILABLE_TELEGRAM_CHANNELS,
+    )
