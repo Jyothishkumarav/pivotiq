@@ -41,9 +41,11 @@ const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
 function ChannelRow({
   stratKey,
   currentChannelId,
+  currentChannelName,
 }: {
   stratKey: string;
   currentChannelId?: string | null;
+  currentChannelName?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -101,20 +103,24 @@ function ChannelRow({
         {hasValue ? (
           <View
             style={{
-              paddingHorizontal: 6,
-              paddingVertical: 2,
+              paddingHorizontal: 8,
+              paddingVertical: 3,
               borderRadius: 99,
               backgroundColor: `${colors.accent}20`,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
             }}
           >
+            <Text style={{ fontSize: 11 }}>📢</Text>
             <Text
               style={{
-                fontSize: 10,
+                fontSize: 11,
                 color: colors.accent,
-                ...(Platform.OS === "web" ? { fontFamily: "monospace" } : {}),
+                fontWeight: "600",
               }}
             >
-              {currentChannelId}
+              {currentChannelName || currentChannelId}
             </Text>
           </View>
         ) : (
@@ -272,9 +278,13 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
   );
   const enabledCount = strategies.filter((s) => s.enabled).length;
 
-  const channelMap: Record<string, string | null | undefined> = Object.fromEntries(
-    (channelData?.strategies ?? []).map((s) => [s.key, s.telegramChannelId])
-  );
+  const channelMap: Record<string, { id: string | null | undefined; name: string | null | undefined }> =
+    Object.fromEntries(
+      (channelData?.strategies ?? []).map((s) => [
+        s.key,
+        { id: s.telegramChannelId, name: s.telegramChannelName },
+      ])
+    );
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -379,7 +389,7 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
               {strategies.map((strat) => {
                 const badge = STRATEGY_BADGES[strat.key] ?? { glyph: "📈", color: colors.accent };
                 const desc = STRATEGY_DESCRIPTIONS[strat.key] ?? "";
-                const channelId = channelMap[strat.key];
+                const channelInfo = channelMap[strat.key];
                 return (
                   <View
                     key={strat.key}
@@ -421,7 +431,11 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
                         thumbColor={strat.enabled ? "#FFFFFF" : colors.textSecondary}
                       />
                     </View>
-                    <ChannelRow stratKey={strat.key} currentChannelId={channelId} />
+                    <ChannelRow
+                      stratKey={strat.key}
+                      currentChannelId={channelInfo?.id}
+                      currentChannelName={channelInfo?.name}
+                    />
                   </View>
                 );
               })}

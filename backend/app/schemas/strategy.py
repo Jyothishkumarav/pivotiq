@@ -29,7 +29,8 @@ class StrategyNotificationItem(BaseModel):
     key: str
     label: str
     enabled: bool
-    telegramChannelId: str | None = None  # per-strategy Telegram chat/channel ID
+    telegramChannelId: str | None = None    # per-strategy Telegram chat/channel ID
+    telegramChannelName: str | None = None  # human-readable group/channel title
 
 
 class StrategyNotificationsResponse(BaseModel):
@@ -43,4 +44,5 @@ class StrategyNotificationUpdate(BaseModel):
 
 class StrategyChannelUpdate(BaseModel):
     key: str
-    telegramChannelId: str | None = None  # None = clear / use global default
+    telegramChannelId: str | None = None    # None = clear / use global default
+    telegramChannelName: str | None = None  # optional friendly name override

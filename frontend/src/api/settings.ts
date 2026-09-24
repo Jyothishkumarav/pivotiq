@@ -11,6 +11,7 @@ export interface StrategyNotificationItem {
   label: string;
   enabled: boolean;
   telegramChannelId?: string | null;
+  telegramChannelName?: string | null;
 }
 
 export interface StrategyNotificationsResponse {
@@ -29,3 +30,4 @@ export const settingsApi = {
   updateStrategyChannel: (key: string, telegramChannelId: string | null) =>
     apiClient.put<StrategyNotificationsResponse>("/settings/strategy-channels", { key, telegramChannelId }),
 };
+
