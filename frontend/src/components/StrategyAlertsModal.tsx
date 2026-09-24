@@ -359,17 +359,20 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
       settingsApi.updateStrategyNotification(key, enabled),
     onMutate: async ({ key, enabled }) => {
       await queryClient.cancelQueries({ queryKey: ["strategy-notifications"] });
-      const prev = queryClient.getQueryData<{ strategies: StrategyNotificationItem[] }>(
-        ["strategy-notifications"]
-      );
-      if (prev) {
+      const prev = queryClient.getQueryData<any>(["strategy-notifications"]);
+      if (prev?.strategies) {
         queryClient.setQueryData(["strategy-notifications"], {
-          strategies: prev.strategies.map((s) =>
+          ...prev,
+          strategies: prev.strategies.map((s: StrategyNotificationItem) =>
             s.key === key ? { ...s, enabled } : s
           ),
         });
       }
       return { prev };
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["strategy-notifications"], data);
+      queryClient.setQueryData(["strategy-channels"], data);
     },
     onError: (_err, _vars, context) => {
       if (context?.prev) {
@@ -378,6 +381,7 @@ export function StrategyAlertsModal({ visible, onClose }: Props) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["strategy-notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["strategy-channels"] });
     },
   });
 

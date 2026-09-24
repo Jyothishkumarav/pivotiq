@@ -118,11 +118,17 @@ async def update_strategy_notification(
     else:
         enabled_set.discard(payload.key)
 
-    await db.user_settings.update_one(
-        {"userId": user_id, "type": "strategy_notifications"},
-        {"$set": {"enabledStrategies": list(enabled_set)}},
-        upsert=True,
-    )
+    if doc and "_id" in doc:
+        await db.user_settings.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"enabledStrategies": list(enabled_set), "userId": user_id}},
+        )
+    else:
+        await db.user_settings.update_one(
+            {"userId": user_id, "type": "strategy_notifications"},
+            {"$set": {"enabledStrategies": list(enabled_set)}},
+            upsert=True,
+        )
 
     items = [
         StrategyNotificationItem(
@@ -263,11 +269,17 @@ async def update_strategy_channel(
             channels.pop(payload.key, None)
             channel_names.pop(payload.key, None)
 
-    await db.user_settings.update_one(
-        {"userId": user_id, "type": "strategy_notifications"},
-        {"$set": {"strategyChannels": channels, "strategyChannelNames": channel_names}},
-        upsert=True,
-    )
+    if doc and "_id" in doc:
+        await db.user_settings.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"strategyChannels": channels, "strategyChannelNames": channel_names, "userId": user_id}},
+        )
+    else:
+        await db.user_settings.update_one(
+            {"userId": user_id, "type": "strategy_notifications"},
+            {"$set": {"strategyChannels": channels, "strategyChannelNames": channel_names}},
+            upsert=True,
+        )
 
     items = [
         StrategyNotificationItem(
