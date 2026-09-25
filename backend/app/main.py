@@ -40,6 +40,14 @@ app.include_router(settings_router.router)
 app.include_router(fyers_router.router)
 
 
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "watchlistProcessor": watchlist_processor.get_status(),
+    }

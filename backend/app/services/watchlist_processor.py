@@ -95,6 +95,16 @@ class WatchlistProcessor:
             self._task.cancel()
         logger.info("WatchlistProcessor daemon stopped.")
 
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "running": self._running,
+            "taskActive": self._task is not None and not self._task.done(),
+            "isMarketHours": _is_market_hours(),
+            "trackedWatchlists": len(self._watchlist_meta),
+            "activeUsers": len(self._user_active_watchlist),
+            "cachedWatchlists": list(self._memory_snapshots.keys()),
+        }
+
     # -------------------------------------------------------------------------
     # Cache Accessors & Invalidation
     # -------------------------------------------------------------------------
