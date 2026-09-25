@@ -8,12 +8,15 @@ from app.database import close_client, ensure_indexes
 from app.routers import alerts, auth, stocks, trading, watchlists
 from app.routers import fyers as fyers_router
 from app.routers import settings as settings_router
+from app.services.watchlist_processor import watchlist_processor
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_indexes()
+    watchlist_processor.start()
     yield
+    watchlist_processor.stop()
     await close_client()
 
 

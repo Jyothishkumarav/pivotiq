@@ -124,7 +124,7 @@ async def test_execute_buy_and_sl_order_chain():
     from unittest.mock import AsyncMock
     from app.services.brokers.base import BaseBroker, BrokerFunds, BrokerOrderResponse
 
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 9, 25, 4, 30, tzinfo=timezone.utc)
     mock_broker = MagicMock(spec=BaseBroker)
     mock_broker.broker_name = "test_broker"
     mock_broker.get_funds = AsyncMock(
@@ -178,6 +178,7 @@ async def test_execute_buy_and_sl_order_chain():
         max_risk_amount=1100.0,
         sl_buffer_pct=20.0,
         strategy="orb_pullback_support",
+        triggered_at=now,
     )
 
     assert result.status == "success"
@@ -192,10 +193,11 @@ async def test_execute_buy_and_sl_order_chain():
 @pytest.mark.anyio
 async def test_paper_broker_simulated_execution():
     """Verify PaperBroker execution and order cancellation."""
+    from datetime import datetime, timezone
     from unittest.mock import AsyncMock
     from bson import ObjectId
     from app.services.brokers.paper_broker import PaperBroker
-    from app.services.brokers.base import BrokerOrderRequest
+    from app.services.brokers.base import BrokerOrderRequest, OrderPurpose
 
     db = MagicMock()
     db.paper_orders.insert_one = AsyncMock()
@@ -205,7 +207,9 @@ async def test_paper_broker_simulated_execution():
     update_res.modified_count = 1
     db.paper_orders.update_one = AsyncMock(return_value=update_res)
     db.paper_orders.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
+    db.paper_trades.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
 
+    now = datetime(2026, 9, 25, 4, 30, tzinfo=timezone.utc)
     user_id = ObjectId()
     broker = PaperBroker(user_id=user_id, db=db)
 
@@ -216,6 +220,7 @@ async def test_paper_broker_simulated_execution():
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
         product_type=ProductType.INTRADAY,
+        placed_at=now,
     )
     buy_res = await broker.place_order(buy_req)
     assert buy_res.status == OrderStatus.FILLED
@@ -232,6 +237,8 @@ async def test_paper_broker_simulated_execution():
         stop_price=780.0,
         product_type=ProductType.INTRADAY,
         parent_order_id=buy_res.order_id,
+        purpose=OrderPurpose.STOP_LOSS,
+        placed_at=now,
     )
     sl_res = await broker.place_order(sl_req)
     assert sl_res.status == OrderStatus.OPEN

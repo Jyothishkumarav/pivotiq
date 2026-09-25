@@ -138,6 +138,7 @@ class IntradaySnapshotsRequest(BaseModel):
     entryMode: Literal["touch", "close"] = "close"
     includeFirstCandle: bool = False
     retestDate: str | None = None
+    watchlistId: str | None = None
 
 
 class IntradaySnapshotsResponse(BaseModel):

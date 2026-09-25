@@ -725,10 +725,10 @@ export default function WatchlistDetailScreen() {
   const activeAlertsCount =
     strategyNotifs?.strategies.filter((s) => !HIDDEN_STRATEGIES.includes(s.key) && s.enabled).length ?? 0;
   const { data: intradayData } = useQuery({
-    queryKey: ["intraday", allSymbolsKey, strategy, entryMode, includeFirstCandle, retestDate],
-    queryFn: () => stocksApi.intradaySnapshots(allSymbols, strategy, entryMode, retestDate, includeFirstCandle),
+    queryKey: ["intraday", allSymbolsKey, strategy, entryMode, includeFirstCandle, retestDate, id],
+    queryFn: () => stocksApi.intradaySnapshots(allSymbols, strategy, entryMode, retestDate, includeFirstCandle, id),
     enabled: allSymbols.length > 0,
-    refetchInterval: retestDate ? false : 60_000,
+    refetchInterval: retestDate ? false : 15_000,
     retry: false,
   });
   const intradayMap = intradayData?.snapshots ?? {};

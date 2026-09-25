@@ -38,6 +38,7 @@ export const stocksApi = {
     entryMode: "touch" | "close" = "close",
     retestDate?: string | null,
     includeFirstCandle = false,
+    watchlistId?: string,
   ) =>
     apiClient.post<IntradaySnapshotsResponse>("/stocks/intraday-snapshots", {
       symbols,
@@ -45,6 +46,7 @@ export const stocksApi = {
       entryMode,
       includeFirstCandle,
       ...(retestDate ? { retestDate } : {}),
+      ...(watchlistId ? { watchlistId } : {}),
     }),
   clearFrozenTriggers: (strategy: string, symbols?: string[], date?: string) =>
     apiClient.delete<{ deleted: number; message: string }>("/stocks/intraday-triggers", {

@@ -95,9 +95,11 @@ def calculate_trade_sizing(
     per_share_risk = max(round(abs(stock_price - buffered_sl), 2), 0.05)
 
     # 2. Capital allocation with 5x leverage:
-    # Max trade margin per position is capped at account_capital / max_open_positions,
-    # and cannot exceed available_capital.
-    max_trade_margin = min(available_capital, account_capital / max(1, max_open_positions))
+    # Max trade margin per position is determined by capital_allocation_pct of available_capital,
+    # or capped at account_capital / max_open_positions.
+    max_trade_margin = min(available_capital, available_capital * (capital_allocation_pct / 100.0))
+    if account_capital != DEFAULT_ACCOUNT_CAPITAL or max_open_positions != MAX_OPEN_POSITIONS:
+        max_trade_margin = min(max_trade_margin, account_capital / max(1, max_open_positions))
     max_trade_margin = max(0.0, max_trade_margin)
     purchasing_power = max_trade_margin * leverage
 
@@ -260,8 +262,12 @@ async def execute_order_with_sl(
     user_max_risk = float(trading_cfg.get("maxRiskPerTrade", MAX_RISK_PER_TRADE))
     user_capital = float(trading_cfg.get("paperCapital", DEFAULT_ACCOUNT_CAPITAL))
 
-    eff_sl_buffer = user_sl_buffer if sl_buffer_pct in (20.0, 25.0) else sl_buffer_pct
-    eff_max_risk = min(max_risk_amount, user_max_risk)
+    if user_id is not None:
+        eff_sl_buffer = user_sl_buffer
+        eff_max_risk = min(max_risk_amount, user_max_risk)
+    else:
+        eff_sl_buffer = sl_buffer_pct
+        eff_max_risk = max_risk_amount
 
     target_date_str = None
     if triggered_at:
@@ -450,6 +456,7 @@ async def execute_buy_and_sl_order(
     strategy: str | None = None,
     db: AsyncIOMotorDatabase | None = None,
     user_id: ObjectId | None = None,
+    triggered_at: datetime | None = None,
 ) -> ExecuteOrderResult:
     return await execute_order_with_sl(
         broker=broker,
@@ -464,6 +471,7 @@ async def execute_buy_and_sl_order(
         strategy=strategy,
         db=db,
         user_id=user_id,
+        triggered_at=triggered_at,
     )
 
 
@@ -574,59 +582,13 @@ async def trigger_autotrade_if_enabled(
     # Check if this item is toggled ON for Live Trade in watchlist
     is_live_trade = await is_symbol_autotrade_enabled(user_id, sym_upper, db)
 
-    if is_live_trade:
-        # ---------------------------------------------------------
-        # 1. EXECUTE IN FYERS (LIVE TRADE)
-        # ---------------------------------------------------------
-        broker_key = f"autotrade:fyers:{sym_upper}:{strategy_name}:{date_str}"
-        if cache and cache.exists(broker_key):
-            logger.info("Fyers trade already executed for %s on %s", sym_upper, date_str)
-            return None
+    res_to_return = None
 
-        # Check strategy autotrade config for user allocation settings
-        strat_cfg = {}
-        try:
-            user_ids = [str(user_id)]
-            if ObjectId.is_valid(str(user_id)):
-                user_ids.append(ObjectId(str(user_id)))
-            doc = await db.user_settings.find_one({"userId": {"$in": user_ids}, "type": "strategy_autotrade"})
-            if doc:
-                strat_cfg = doc.get("configs", {}).get(strategy_name, {})
-        except Exception as exc:
-            logger.warning("Could not load user_settings for autotrade: %s", exc)
-
-        try:
-            from app.services.brokers import get_broker
-            broker = await get_broker("fyers", user_id, db)
-            res = await execute_order_with_sl(
-                broker=broker,
-                symbol=sym_upper,
-                side=action,
-                stock_price=entry_price,
-                tight_sl=tight_sl,
-                capital_allocation_pct=float(strat_cfg.get("capitalAllocationPct", 50.0)),
-                max_risk_amount=float(strat_cfg.get("maxRiskPerTrade", 1100.0)),
-                sl_buffer_pct=float(strat_cfg.get("slBufferPct", 20.0)),
-                strategy=strategy_name,
-                db=db,
-                user_id=user_id,
-            )
-            if cache:
-                cache.set_json(broker_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
-            logger.info("Live Fyers %s trade executed for %s on %s: %s", action, sym_upper, strategy_name, res.message)
-            return res
-        except Exception as exc:
-            logger.error("Live Fyers trade failed for %s on %s: %s", sym_upper, strategy_name, exc)
-            return None
-    else:
-        # ---------------------------------------------------------
-        # 2. OR ELSE: EXECUTE IN PAPER (1L CAPITAL = ₹100,000)
-        # ---------------------------------------------------------
-        paper_key = f"autotrade:paper:{sym_upper}:{strategy_name}:{date_str}"
-        if cache and cache.exists(paper_key):
-            logger.info("Paper trade already executed for %s on %s", sym_upper, date_str)
-            return None
-
+    # ---------------------------------------------------------
+    # 1. ALWAYS EXECUTE IN PAPER (UNIVERSAL BASELINE DEFAULT)
+    # ---------------------------------------------------------
+    paper_key = f"autotrade:paper:{sym_upper}:{strategy_name}:{date_str}"
+    if not (cache and cache.exists(paper_key)):
         try:
             from app.services.brokers.paper_broker import PaperBroker
             paper_broker = PaperBroker(user_id=user_id, db=db)
@@ -643,13 +605,54 @@ async def trigger_autotrade_if_enabled(
                 db=db,
                 user_id=user_id,
             )
-            if cache:
+            if cache and paper_res.status == "success":
                 cache.set_json(paper_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
-            logger.info("Paper %s trade executed (1L capital) for %s on %s (order %s)", action, sym_upper, strategy_name, paper_res.buyOrder.order_id)
-            return paper_res
+            logger.info("Paper %s trade executed for %s on %s (order %s)", action, sym_upper, strategy_name, paper_res.buyOrder.order_id)
+            res_to_return = paper_res
         except Exception as exc:
-            logger.error("Paper trade execution failed for %s: %s", sym_upper, exc)
-            return None
+            logger.error("Paper trade failed for %s on %s: %s", sym_upper, strategy_name, exc)
+
+    # ---------------------------------------------------------
+    # 2. IN PARALLEL: IF FYERS ENABLED, ALSO EXECUTE LIVE ON FYERS
+    # ---------------------------------------------------------
+    if is_live_trade:
+        broker_key = f"autotrade:fyers:{sym_upper}:{strategy_name}:{date_str}"
+        if not (cache and cache.exists(broker_key)):
+            strat_cfg = {}
+            try:
+                user_ids = [str(user_id)]
+                if ObjectId.is_valid(str(user_id)):
+                    user_ids.append(ObjectId(str(user_id)))
+                doc = await db.user_settings.find_one({"userId": {"$in": user_ids}, "type": "strategy_autotrade"})
+                if doc:
+                    strat_cfg = doc.get("configs", {}).get(strategy_name, {})
+            except Exception as exc:
+                logger.warning("Could not load user_settings for autotrade: %s", exc)
+
+            try:
+                from app.services.brokers import get_broker
+                broker = await get_broker("fyers", user_id, db)
+                fyers_res = await execute_order_with_sl(
+                    broker=broker,
+                    symbol=sym_upper,
+                    side=action,
+                    stock_price=entry_price,
+                    tight_sl=tight_sl,
+                    capital_allocation_pct=float(strat_cfg.get("capitalAllocationPct", 50.0)),
+                    max_risk_amount=float(strat_cfg.get("maxRiskPerTrade", 1100.0)),
+                    sl_buffer_pct=float(strat_cfg.get("slBufferPct", 20.0)),
+                    strategy=strategy_name,
+                    db=db,
+                    user_id=user_id,
+                )
+                if cache and fyers_res.status == "success":
+                    cache.set_json(broker_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
+                logger.info("Live Fyers %s trade executed for %s on %s: %s", action, sym_upper, strategy_name, fyers_res.message)
+                res_to_return = fyers_res
+            except Exception as exc:
+                logger.error("Live Fyers trade failed for %s on %s: %s", sym_upper, strategy_name, exc)
+
+    return res_to_return
 
 
 async def sync_watchlist_entered_trades(
@@ -783,50 +786,22 @@ async def sync_watchlist_entered_trades(
             if existing_chain:
                 continue
 
-            if not is_live:
-                existing_paper = await db.paper_orders.find_one({
-                    "userId": {"$in": user_ids},
-                    "symbol": sym,
-                    "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
-                })
-                if existing_paper:
-                    continue
-
             triggered_at = t.get("triggeredAt")
 
-            # Execute trade!
-            if is_live:
-                try:
-                    from app.services.brokers import get_broker
-                    broker = await get_broker("fyers", user_ids[0], db)
-                    res = await execute_order_with_sl(
-                        broker=broker,
-                        symbol=sym,
-                        side=action,
-                        stock_price=float(entry_price),
-                        tight_sl=float(tight_sl),
-                        sl_buffer_pct=cfg_buffer,
-                        max_risk_amount=cfg_risk,
-                        strategy=strat,
-                        db=db,
-                        user_id=ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else None,
-                        triggered_at=triggered_at,
-                    )
-                    if res.status == "success":
-                        if cache:
-                            cache.set_json(order_key, {"executed": True}, ttl_seconds=8 * 3600)
-                        results.append(res)
-                        logger.info("Live Fyers auto-trade synced for %s (%s)", sym, action)
-                    else:
-                        logger.warning("Live Fyers auto-trade rejected for %s: %s", sym, res.message)
-                except Exception as exc:
-                    logger.error("Failed executing live auto-trade for %s: %s", sym, exc)
-            else:
+            # -------------------------------------------------------------
+            # 1. ALWAYS EXECUTE PAPER TRADE (UNIVERSAL BASELINE DEFAULT)
+            # -------------------------------------------------------------
+            existing_paper = await db.paper_orders.find_one({
+                "userId": {"$in": user_ids},
+                "symbol": sym,
+                "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+            })
+            if not existing_paper:
                 try:
                     from app.services.brokers.paper_broker import PaperBroker
                     uid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else user_id
                     paper_broker = PaperBroker(user_id=uid, db=db)
-                    res = await execute_order_with_sl(
+                    res_paper = await execute_order_with_sl(
                         broker=paper_broker,
                         symbol=sym,
                         side=action,
@@ -839,15 +814,47 @@ async def sync_watchlist_entered_trades(
                         user_id=uid if isinstance(uid, ObjectId) else None,
                         triggered_at=triggered_at,
                     )
-                    if res.status == "success":
+                    if res_paper.status == "success":
+                        paper_order_key = f"autotrade:paper:{sym}:{strat}:{date_str}"
                         if cache:
-                            cache.set_json(order_key, {"executed": True}, ttl_seconds=8 * 3600)
-                        results.append(res)
-                        logger.info("Paper auto-trade synced for %s (%s): order %s", sym, action, res.buyOrder.order_id)
+                            cache.set_json(paper_order_key, {"executed": True}, ttl_seconds=8 * 3600)
+                        results.append(res_paper)
+                        logger.info("Paper auto-trade synced for %s (%s): order %s", sym, action, res_paper.buyOrder.order_id)
                     else:
-                        logger.warning("Paper auto-trade rejected for %s (%s): %s", sym, action, res.message)
+                        logger.warning("Paper auto-trade rejected for %s (%s): %s", sym, action, res_paper.message)
                 except Exception as exc:
                     logger.error("Failed executing paper auto-trade for %s: %s", sym, exc)
+
+            # -------------------------------------------------------------
+            # 2. IN PARALLEL: IF LIVE TRADE ENABLED, ALSO EXECUTE ON FYERS
+            # -------------------------------------------------------------
+            if is_live and not existing_chain:
+                try:
+                    from app.services.brokers import get_broker
+                    broker = await get_broker("fyers", user_ids[0], db)
+                    res_fyers = await execute_order_with_sl(
+                        broker=broker,
+                        symbol=sym,
+                        side=action,
+                        stock_price=float(entry_price),
+                        tight_sl=float(tight_sl),
+                        sl_buffer_pct=cfg_buffer,
+                        max_risk_amount=cfg_risk,
+                        strategy=strat,
+                        db=db,
+                        user_id=ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else None,
+                        triggered_at=triggered_at,
+                    )
+                    if res_fyers.status == "success":
+                        fyers_order_key = f"autotrade:fyers:{sym}:{strat}:{date_str}"
+                        if cache:
+                            cache.set_json(fyers_order_key, {"executed": True}, ttl_seconds=8 * 3600)
+                        results.append(res_fyers)
+                        logger.info("Live Fyers auto-trade synced for %s (%s): order %s", sym, action, res_fyers.buyOrder.order_id)
+                    else:
+                        logger.warning("Live Fyers auto-trade rejected for %s: %s", sym, res_fyers.message)
+                except Exception as exc:
+                    logger.error("Failed executing live auto-trade for %s: %s", sym, exc)
     except Exception as e:
         logger.error("Error in sync_watchlist_entered_trades: %s", e)
 

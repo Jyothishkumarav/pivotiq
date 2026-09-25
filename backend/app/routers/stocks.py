@@ -22,10 +22,13 @@ from app.services.fyers_client import FyersTokenExpired
 from app.services.market_context import get_active_fyers_token
 from app.services.notification_client import (
     clear_notification_cache,
+    notify_pullback_started,
     notify_stop_loss_hit,
+    notify_support_candle_formed,
     notify_trade_setup_triggered,
 )
 from app.services.order_execution import trigger_autotrade_if_enabled
+from app.services.watchlist_processor import watchlist_processor
 
 router = APIRouter(prefix="/stocks", tags=["stocks"], dependencies=[Depends(with_fyers_context)])
 
@@ -130,6 +133,12 @@ async def get_intraday_snapshot(
             detail="No intraday data found for this date.",
         )
     if not retest_date:
+        setup = snapshot.tradeSetup
+        if setup:
+            if setup.stageKey == "pb_forming":
+                asyncio.create_task(asyncio.to_thread(notify_pullback_started, snapshot, current_user["_id"]))
+            elif setup.stageKey == "support_formed":
+                asyncio.create_task(asyncio.to_thread(notify_support_candle_formed, snapshot, current_user["_id"]))
         asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot, current_user["_id"]))
         asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot, current_user["_id"]))
         asyncio.create_task(trigger_autotrade_if_enabled(snapshot, current_user["_id"], get_db()))
@@ -144,14 +153,27 @@ async def batch_intraday_snapshots(
         return IntradaySnapshotsResponse(snapshots={}, fetchedAt=datetime.now(timezone.utc))
     if not strategies.is_valid_strategy(payload.strategy):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
+
+    wid = payload.watchlistId or watchlist_processor._user_active_watchlist.get(str(current_user["_id"]))
+    retest_date = getattr(payload, "retestDate", None)
+    entry_mode = getattr(payload, "entryMode", "close") or "close"
+    include_first_candle = getattr(payload, "includeFirstCandle", False)
+
+    # Fast path: Serve from processor's pre-computed snapshot cache (<10ms)
+    if not retest_date and wid:
+        cached_snapshots = watchlist_processor.get_cached_snapshots(wid)
+        req_syms = [s.upper() for s in payload.symbols[:50]]
+        if cached_snapshots and all(s in cached_snapshots for s in req_syms):
+            return IntradaySnapshotsResponse(
+                snapshots={s: cached_snapshots[s] for s in req_syms},
+                fetchedAt=datetime.now(timezone.utc),
+            )
+
     token = await _require_fyers_token(current_user)
 
     # Each snapshot makes 2 Fyers calls (5m + 3m). Fyers rate-limits at ~10 req/s,
     # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
     sem = asyncio.Semaphore(2)
-    entry_mode = getattr(payload, "entryMode", "close") or "close"
-    include_first_candle = getattr(payload, "includeFirstCandle", False)
-    retest_date = getattr(payload, "retestDate", None)
 
     async def _one(sym: str) -> tuple[str, IntradaySnapshot | None]:
         async with sem:
@@ -181,6 +203,12 @@ async def batch_intraday_snapshots(
             if snap is not None:
                 if sym in ("NIFTY50", "BANKNIFTY", "NIFTY 50", "BANK NIFTY"):
                     continue
+                setup = snap.tradeSetup
+                if setup:
+                    if setup.stageKey == "pb_forming":
+                        asyncio.create_task(asyncio.to_thread(notify_pullback_started, snap, user_id, index_snaps))
+                    elif setup.stageKey == "support_formed":
+                        asyncio.create_task(asyncio.to_thread(notify_support_candle_formed, snap, user_id, index_snaps))
                 asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id, index_snaps))
                 asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id, index_snaps))
                 asyncio.create_task(trigger_autotrade_if_enabled(snap, user_id, get_db()))

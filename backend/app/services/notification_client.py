@@ -530,3 +530,166 @@ def clear_notification_cache(
         deleted += cache.delete_pattern(f"notif:*:*:{strat_pat}:*")
     return deleted
 
+
+def _format_pullback_started_message(
+    snapshot: IntradaySnapshot,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> tuple[str, str]:
+    setup = snapshot.tradeSetup
+    strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
+    action_label = setup.action.upper()
+    action_emoji = "🟢" if setup.action == "buy" else "🔴"
+
+    title = f"🟡 {snapshot.symbol} · Pullback Started · {strategy_label}"
+
+    lines = [
+        f"🟡 <b>PULLBACK STARTED — {snapshot.symbol}</b>",
+        f"Strategy  ·  <b>{strategy_label}</b>  |  {action_emoji} {action_label} setup",
+        "",
+        f"LTP        ·  <b>₹{snapshot.currentPrice:,.2f}</b>",
+        f"BO Price   ·  <code>₹{setup.entry:,.2f}</code>",
+        f"ORB Range  ·  <code>₹{snapshot.openingRangeLow:,.2f} – ₹{snapshot.openingRangeHigh:,.2f}</code>",
+        f"VWAP       ·  <code>₹{snapshot.vwap:,.2f}</code>",
+        "",
+        f"ℹ️ <i>Pullback active. Watching for supporting candle formation.</i>",
+        "",
+        f"🔗 {_tradingview_link(snapshot.symbol)}",
+    ]
+    return title, "\n".join(lines)
+
+
+def notify_pullback_started(
+    snapshot: IntradaySnapshot,
+    user_id: Any | None = None,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> None:
+    settings = get_settings()
+    if not settings.notification_service_enabled:
+        return
+
+    setup = snapshot.tradeSetup
+    if setup is None or setup.action not in ("buy", "sell"):
+        return
+
+    enabled_strategies = get_user_enabled_strategies(user_id)
+    if setup.strategy not in enabled_strategies:
+        return
+
+    date_str = datetime.now(_IST).date().isoformat()
+    cache = get_cache_client()
+    cache_key = f"notif:stage:pb:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}"
+    if cache.exists(cache_key):
+        return
+
+    title, message = _format_pullback_started_message(snapshot, index_snapshots=index_snapshots)
+    chat_id = get_strategy_telegram_channel(setup.strategy, user_id)
+    payload = {
+        "channels": settings.notification_channels,
+        "recipient": {"telegramChatId": chat_id},
+        "title": title,
+        "data": message,
+        "reference": f"pb-{snapshot.symbol}-{setup.strategy}-{date_str}",
+        "metadata": {
+            "source": "pivotiq-backend",
+            "symbol": snapshot.symbol,
+            "action": setup.action,
+            "strategy": setup.strategy,
+            "stage": "pb_forming",
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications",
+            json=payload,
+            timeout=5,
+        )
+        if response.ok:
+            cache.set_json(cache_key, {"sent": True}, ttl_seconds=_TRIGGER_CACHE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("Could not send pullback started alert for %s: %s", snapshot.symbol, exc)
+
+
+def _format_support_formed_message(
+    snapshot: IntradaySnapshot,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> tuple[str, str]:
+    setup = snapshot.tradeSetup
+    strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
+    action_label = setup.action.upper()
+    action_emoji = "🟢" if setup.action == "buy" else "🔴"
+    trigger_level = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    risk_per_share = abs(trigger_level - setup.stopLoss) if setup.stopLoss else 0.0
+
+    title = f"🔵 {snapshot.symbol} · Support Formed (Armed) · {strategy_label}"
+
+    lines = [
+        f"🔵 <b>SETUP ARMED — {snapshot.symbol}</b>",
+        f"Strategy  ·  <b>{strategy_label}</b>  |  {action_emoji} {action_label} setup",
+        "",
+        f"Trigger    ·  <b>₹{trigger_level:,.2f}</b>  <i>({'Green High' if setup.action == 'buy' else 'Red Low'})</i>",
+        f"BO Price   ·  <code>₹{setup.entry:,.2f}</code>",
+        f"LTP        ·  <code>₹{snapshot.currentPrice:,.2f}</code>",
+        f"Tight SL   ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Risk: ₹{risk_per_share:,.2f}/sh)</i>",
+        f"VWAP       ·  <code>₹{snapshot.vwap:,.2f}</code>",
+        "",
+        f"🎯 <b>Ready for entry. Order will trigger when price breaks ₹{trigger_level:,.2f}.</b>",
+        "",
+        f"🔗 {_tradingview_link(snapshot.symbol)}",
+    ]
+    return title, "\n".join(lines)
+
+
+def notify_support_candle_formed(
+    snapshot: IntradaySnapshot,
+    user_id: Any | None = None,
+    index_snapshots: dict[str, IntradaySnapshot] | None = None,
+) -> None:
+    settings = get_settings()
+    if not settings.notification_service_enabled:
+        return
+
+    setup = snapshot.tradeSetup
+    if setup is None or setup.action not in ("buy", "sell"):
+        return
+
+    enabled_strategies = get_user_enabled_strategies(user_id)
+    if setup.strategy not in enabled_strategies:
+        return
+
+    date_str = datetime.now(_IST).date().isoformat()
+    trigger_level = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    cache = get_cache_client()
+    cache_key = f"notif:stage:sup:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}:{trigger_level:.2f}"
+    if cache.exists(cache_key):
+        return
+
+    title, message = _format_support_formed_message(snapshot, index_snapshots=index_snapshots)
+    chat_id = get_strategy_telegram_channel(setup.strategy, user_id)
+    payload = {
+        "channels": settings.notification_channels,
+        "recipient": {"telegramChatId": chat_id},
+        "title": title,
+        "data": message,
+        "reference": f"sup-{snapshot.symbol}-{setup.strategy}-{trigger_level:.2f}-{date_str}",
+        "metadata": {
+            "source": "pivotiq-backend",
+            "symbol": snapshot.symbol,
+            "action": setup.action,
+            "strategy": setup.strategy,
+            "stage": "support_formed",
+        },
+    }
+
+    try:
+        response = requests.post(
+            f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications",
+            json=payload,
+            timeout=5,
+        )
+        if response.ok:
+            cache.set_json(cache_key, {"sent": True}, ttl_seconds=_TRIGGER_CACHE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("Could not send support candle formed alert for %s: %s", snapshot.symbol, exc)
+
+

@@ -22,6 +22,7 @@ from app.schemas.strategy import (
 )
 from app.services import market_data
 from app.services.strategies import STRATEGY_NAMES
+from app.services.watchlist_processor import watchlist_processor
 
 AVAILABLE_TELEGRAM_CHANNELS: list[TelegramChannelOption] = [
     TelegramChannelOption(id="-1004449069761", name="Pivotiq_Tuned"),
@@ -460,6 +461,7 @@ async def update_trading_settings(
         cfg["maxOpenPositions"] = max(1, min(50, int(payload.maxOpenPositions)))
     if payload.activeWatchlistId is not None:
         cfg["activeWatchlistId"] = payload.activeWatchlistId if payload.activeWatchlistId not in ("all", "") else None
+        watchlist_processor.switch_active_watchlist(user_id, cfg["activeWatchlistId"])
 
     now = datetime.now(timezone.utc)
     await db.user_settings.update_one(

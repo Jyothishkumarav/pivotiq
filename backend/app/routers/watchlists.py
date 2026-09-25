@@ -17,6 +17,7 @@ from app.schemas.watchlist import (
 )
 from app.services import market_data, strategies, support_levels
 from app.services.order_execution import sync_watchlist_entered_trades
+from app.services.watchlist_processor import watchlist_processor
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"], dependencies=[Depends(with_fyers_context)])
 
@@ -171,6 +172,7 @@ async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: di
     await db.watchlists.update_one(
         {"_id": doc["_id"]}, {"$push": {"items": new_item}, "$set": {"updatedAt": now}}
     )
+    watchlist_processor.notify_stock_added(watchlist_id, symbol, auto_trade=bool(payload.autoTrade))
     doc["items"] = doc.get("items", []) + [new_item]
     enriched = [_enrich_item(i) for i in doc["items"]]
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
@@ -199,6 +201,8 @@ async def toggle_item_autotrade(
     if res.matched_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found in watchlist")
 
+    watchlist_processor.notify_autotrade_toggled(watchlist_id, symbol_upper, payload.autoTrade)
+
     for i in doc.get("items", []):
         if i["symbol"] == symbol_upper:
             i["autoTrade"] = payload.autoTrade
@@ -216,6 +220,7 @@ async def remove_item(watchlist_id: str, symbol: str, current_user: dict = Depen
     await db.watchlists.update_one(
         {"_id": doc["_id"]}, {"$pull": {"items": {"symbol": symbol.upper()}}, "$set": {"updatedAt": now}}
     )
+    watchlist_processor.notify_stock_removed(watchlist_id, symbol.upper())
     doc["items"] = [i for i in doc.get("items", []) if i["symbol"] != symbol.upper()]
     enriched = [_enrich_item(i) for i in doc["items"]]
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
@@ -266,6 +271,7 @@ async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = De
     doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
     now = datetime.now(timezone.utc)
     await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"strategy": strategy, "updatedAt": now}})
+    watchlist_processor.invalidate_cache(watchlist_id)
     doc["strategy"] = strategy
     enriched = [_enrich_item(i) for i in doc.get("items", [])]
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
