@@ -229,6 +229,7 @@ export interface WatchlistItem {
   symbol: string;
   exchange: string;
   addedAt: string;
+  autoTrade?: boolean;
   ltp: number | null;
   changePercent: number | null;
   nearestSupport: number | null;
@@ -269,8 +270,8 @@ export interface Alert {
 
 export type Segment = "intraday" | "delivery";
 export type Side = "buy" | "sell";
-export type OrderType = "market" | "limit";
-export type OrderStatus = "open" | "filled" | "squaredOff" | "cancelled";
+export type OrderType = "market" | "limit" | "sl_m" | "sl_l";
+export type OrderStatus = "open" | "filled" | "squaredOff" | "cancelled" | "rejected";
 
 export interface Trade {
   id: string;
@@ -310,3 +311,85 @@ export interface PortfolioSummary {
   todayPnl: number;
   holdingsCount: number;
 }
+
+export type BrokerType = "paper" | "fyers";
+
+export interface BrokerFunds {
+  broker: string;
+  available_balance: number;
+  total_balance: number;
+  utilized_margin: number;
+  realized_pnl: number;
+  buying_power_5x: number;
+}
+
+export interface TradeSizingResult {
+  qty: number;
+  bufferedSl: number;
+  rawTightSl: number;
+  riskPerShare: number;
+  totalRisk: number;
+  maxRiskAllowed: number;
+  tradeCapital: number;
+  marginRequired: number;
+  purchasingPower: number;
+  leverage: number;
+  affordable: boolean;
+  formulaExplanation: string;
+}
+
+export interface BrokerOrder {
+  order_id: string;
+  broker: string;
+  symbol: string;
+  qty: number;
+  filled_qty: number;
+  price: number;
+  limit_price?: number | null;
+  stop_price?: number | null;
+  side: Side;
+  order_type: "market" | "limit" | "sl_m" | "sl_l";
+  product_type: string;
+  status: "open" | "filled" | "cancelled" | "rejected";
+  purpose: "entry" | "stop_loss" | "exit";
+  parent_order_id?: string | null;
+  strategy?: string | null;
+  message?: string | null;
+  placed_at: string;
+  executed_at?: string | null;
+}
+
+export interface ExecuteOrderResult {
+  buyOrder: BrokerOrder;
+  slOrder?: BrokerOrder | null;
+  sizing?: TradeSizingResult | null;
+  status: string;
+  message: string;
+}
+
+export interface StrategyAutoTradeItem {
+  key: string;
+  label: string;
+  enabled: boolean;
+  broker: string;
+  capitalAllocationPct: number;
+  maxRiskPerTrade: number;
+  slBufferPct: number;
+  leverage: number;
+  productType: string;
+}
+
+export interface StrategyAutoTradeResponse {
+  strategies: StrategyAutoTradeItem[];
+  availableBrokers: { id: string; name: string }[];
+}
+
+export interface StrategyAutoTradeUpdate {
+  key: string;
+  enabled?: boolean;
+  broker?: string;
+  capitalAllocationPct?: number;
+  maxRiskPerTrade?: number;
+  slBufferPct?: number;
+}
+

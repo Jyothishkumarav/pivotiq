@@ -83,6 +83,7 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="stock/[symbol]" options={{ title: "Stock detail" }} />
             <Stack.Screen name="watchlist/[id]" options={{ title: "Watchlist" }} />
+            <Stack.Screen name="settings" options={{ title: "Trading Settings" }} />
             <Stack.Screen
               name="alert/new"
               options={{ title: "New alert", presentation: "modal", headerShown: true }}

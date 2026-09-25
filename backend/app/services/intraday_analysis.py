@@ -306,6 +306,19 @@ class _TriggerStateCache:
         # First writer wins even across processes/threads — $setOnInsert only
         # applies on the initial insert, so a concurrent freeze can't overwrite
         # an already-persisted trigger with a later timestamp.
+        from app.services.market_data import is_index_symbol
+        if is_index_symbol(symbol):
+            # Benchmark indices are used for market bias, not saved as tradeable stock triggers
+            return {
+                "date": today, "triggered_at": triggered_at, "action": action, "sl_hit_at": None,
+                "entry": (extra or {}).get("entry"), "stop_loss": (extra or {}).get("stopLoss"),
+                "sl_wide": (extra or {}).get("slWide"),
+                "confirmation": (extra or {}).get("confirmation"),
+                "trigger_price": (extra or {}).get("triggerPrice"),
+                "entry_mode": entry_mode,
+                "include_first_candle": include_first_candle,
+            }
+
         try:
             insert_fields = {
                 "symbol": symbol,

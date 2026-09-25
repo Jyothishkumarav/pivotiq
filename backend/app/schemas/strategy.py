@@ -52,3 +52,30 @@ class StrategyChannelUpdate(BaseModel):
     key: str
     telegramChannelId: str | None = None    # None = clear / use global default
     telegramChannelName: str | None = None  # optional friendly name override
+
+
+class StrategyAutoTradeItem(BaseModel):
+    key: str
+    label: str
+    enabled: bool = False
+    broker: str = "paper"  # "fyers" | "paper"
+    capitalAllocationPct: float = 50.0
+    maxRiskPerTrade: float = 1100.0
+    slBufferPct: float = 20.0
+    leverage: float = 5.0
+    productType: str = "INTRADAY"
+
+
+class StrategyAutoTradeResponse(BaseModel):
+    strategies: list[StrategyAutoTradeItem]
+    availableBrokers: list[dict[str, str]] = []
+
+
+class StrategyAutoTradeUpdate(BaseModel):
+    key: str
+    enabled: bool | None = None
+    broker: str | None = None
+    capitalAllocationPct: float | None = None
+    maxRiskPerTrade: float | None = None
+    slBufferPct: float | None = None
+

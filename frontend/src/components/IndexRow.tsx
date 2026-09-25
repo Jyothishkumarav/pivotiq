@@ -103,7 +103,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           }}
         >
           {/* Symbol + intraday subtext */}
-          <View style={{ flex: 1.25, gap: 2 }}>
+          <View style={{ flex: 1.3, paddingHorizontal: 6, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle" style={{ fontWeight: "700", letterSpacing: 0.2 }}>
@@ -118,14 +118,14 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* LTP column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono" style={{ fontWeight: "700" }}>
               {effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}
             </Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {dayChangePct !== null ? (
               <Text variant="mono" tone={isUp ? "positive" : "negative"} style={{ fontWeight: "600" }}>
                 {formatPercent(dayChangePct)}
@@ -149,7 +149,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Setup column: pill only */}
-          <View style={{ flex: 0.65, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.65, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               <SetupPill setup={intraday.tradeSetup} />
             ) : (
@@ -160,7 +160,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Entry column */}
-          <View style={{ flex: 0.85, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.9, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
               (() => {
@@ -212,7 +212,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
-          <View style={{ flex: 1.35, alignItems: "flex-end", gap: 2, paddingRight: spacing.sm }}>
+          <View style={{ flex: 1.4, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" ||
               intraday.tradeSetup.status === "sl_hit" ||
@@ -266,7 +266,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 1.0, alignItems: "flex-end", paddingLeft: spacing.xs }}>
+          <View style={{ flex: 1.0, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -384,7 +384,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Δ Entry column */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             effectiveLtp !== null ? (
@@ -415,7 +415,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Δ SL column */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             effectiveLtp !== null ? (
@@ -450,14 +450,14 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Max Run column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono" tone="muted">
               —
             </Text>
           </View>
 
           {/* Time column */}
-          <View style={{ flex: 0.65, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup?.triggeredAt ? (
               <Text variant="caption" tone="positive">
                 {formatIstTime(intraday.tradeSetup.triggeredAt)}
@@ -469,8 +469,8 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
             )}
           </View>
 
-          {/* Support column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+          {/* Live Trade column (indices are not directly traded from this equity row) */}
+          <View style={{ flex: 0.95, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono" tone="muted">
               —
             </Text>

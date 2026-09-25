@@ -14,4 +14,6 @@ export const watchlistsApi = {
     apiClient.put<Watchlist>(`/watchlists/${id}/sort-preference?preference=${preference}`),
   setStrategy: (id: string, strategy: string) =>
     apiClient.put<Watchlist>(`/watchlists/${id}/strategy?strategy=${strategy}`),
+  toggleItemAutoTrade: (id: string, symbol: string, autoTrade: boolean) =>
+    apiClient.put<Watchlist>(`/watchlists/${id}/items/${symbol}/autotrade`, { autoTrade }),
 };

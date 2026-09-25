@@ -27,7 +27,8 @@ export function formatRelativeTime(iso: string): string {
 
 export function formatIstTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString("en-IN", {
+    const normalized = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
+    return new Date(normalized).toLocaleTimeString("en-IN", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
@@ -37,3 +38,27 @@ export function formatIstTime(iso: string): string {
     return "";
   }
 }
+
+export function formatOrderTimestamp(iso: string): string {
+  if (!iso) return "—";
+  try {
+    const normalized = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return iso;
+    const timeStr = d.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    });
+    const dateStr = d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      timeZone: "Asia/Kolkata",
+    });
+    return `${timeStr} · ${dateStr}`;
+  } catch {
+    return iso;
+  }
+}
+

@@ -17,6 +17,8 @@ class Side(str, Enum):
 class OrderType(str, Enum):
     market = "market"
     limit = "limit"
+    sl_m = "sl_m"
+    sl_l = "sl_l"
 
 
 class OrderStatus(str, Enum):
@@ -24,6 +26,7 @@ class OrderStatus(str, Enum):
     filled = "filled"
     squaredOff = "squaredOff"
     cancelled = "cancelled"
+    rejected = "rejected"
 
 
 class TradeCreate(BaseModel):

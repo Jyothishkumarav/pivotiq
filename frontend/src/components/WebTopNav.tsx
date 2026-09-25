@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 import { useRouter, usePathname } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
@@ -44,6 +44,7 @@ function DataSourceToggle() {
 function UserMenu() {
   const { user, status, logout } = useAuthStore();
   const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   if (status !== "authenticated" || !user) {
     return (
@@ -65,6 +66,7 @@ function UserMenu() {
   const displayName = user.name || user.email.split("@")[0];
 
   const handleLogout = async () => {
+    setMenuOpen(false);
     await logout();
     if (Platform.OS === "web" && typeof window !== "undefined") {
       window.location.replace("/login");
@@ -75,20 +77,90 @@ function UserMenu() {
 
   return (
     <View style={styles.userSection}>
-      {/* User Badge / Icon */}
-      <View style={styles.userBadge}>
-        <View style={styles.avatar}>
-          <Text variant="caption" style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>
-            {initial}
-          </Text>
-        </View>
-        <Text
-          variant="caption"
-          style={{ color: colors.textPrimary, fontWeight: "600", maxWidth: 100 }}
-          numberOfLines={1}
-        >
-          {displayName}
+      {/* Settings Navigation Shortcut */}
+      <Pressable
+        onPress={() => router.push("/settings")}
+        style={({ hovered }: any) => [
+          styles.settingsBtn,
+          hovered && styles.settingsBtnHovered,
+        ]}
+      >
+        <Text variant="caption" style={{ color: colors.textPrimary, fontWeight: "600" }}>
+          ⚙️ Settings
         </Text>
+      </Pressable>
+
+      {/* User Badge / Dropdown Menu Trigger */}
+      <View style={{ position: "relative" }}>
+        <Pressable
+          onPress={() => setMenuOpen((prev) => !prev)}
+          style={({ hovered }: any) => [
+            styles.userBadge,
+            hovered && { borderColor: colors.accent },
+          ]}
+        >
+          <View style={styles.avatar}>
+            <Text variant="caption" style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>
+              {initial}
+            </Text>
+          </View>
+          <Text
+            variant="caption"
+            style={{ color: colors.textPrimary, fontWeight: "600", maxWidth: 100 }}
+            numberOfLines={1}
+          >
+            {displayName}
+          </Text>
+          <Text variant="caption" tone="muted" style={{ fontSize: 9 }}>
+            {menuOpen ? "▲" : "▼"}
+          </Text>
+        </Pressable>
+
+        {/* Dropdown Menu */}
+        {menuOpen ? (
+          <View style={styles.dropdownMenu}>
+            <View style={styles.dropdownHeader}>
+              <Text variant="caption" tone="primary" style={{ fontWeight: "700" }}>
+                {displayName}
+              </Text>
+              <Text variant="caption" tone="muted" numberOfLines={1}>
+                {user.email}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                setMenuOpen(false);
+                router.push("/settings");
+              }}
+              style={({ hovered }: any) => [
+                styles.dropdownItem,
+                hovered && styles.dropdownItemHovered,
+              ]}
+            >
+              <Text variant="bodyStrong" style={{ fontSize: 13, color: colors.textPrimary }}>
+                ⚙️ Trading Settings
+              </Text>
+              <Text variant="caption" tone="muted">
+                Funds, SL Buffer, Watchlist
+              </Text>
+            </Pressable>
+
+            <View style={{ height: 1, backgroundColor: colors.borderSubtle }} />
+
+            <Pressable
+              onPress={handleLogout}
+              style={({ hovered }: any) => [
+                styles.dropdownItem,
+                hovered && styles.dropdownItemHovered,
+              ]}
+            >
+              <Text variant="bodyStrong" tone="negative" style={{ fontSize: 13 }}>
+                🚪 Log out
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       {/* Logout Action */}
@@ -248,5 +320,50 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.full,
     backgroundColor: colors.accent,
+  },
+  settingsBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  settingsBtnHovered: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceElevated,
+  },
+  dropdownMenu: {
+    position: "absolute" as any,
+    top: 36,
+    right: 0,
+    minWidth: 200,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
+    zIndex: 9999,
+    overflow: "hidden",
+  },
+  dropdownHeader: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSubtle,
+    gap: 2,
+  },
+  dropdownItem: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: 2,
+  },
+  dropdownItemHovered: {
+    backgroundColor: colors.surface,
   },
 });

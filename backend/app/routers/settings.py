@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from typing import Literal
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -8,6 +10,9 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.schemas.strategy import (
     STRATEGY_DISPLAY_NAMES,
+    StrategyAutoTradeItem,
+    StrategyAutoTradeResponse,
+    StrategyAutoTradeUpdate,
     StrategyChannelUpdate,
     StrategyName,
     StrategyNotificationItem,
@@ -295,3 +300,189 @@ async def update_strategy_channel(
         strategies=items,
         availableChannels=AVAILABLE_TELEGRAM_CHANNELS,
     )
+
+
+AVAILABLE_BROKERS = [
+    {"id": "paper", "name": "PivotIQ Paper Trading (Simulated)"},
+    {"id": "fyers", "name": "Fyers Securities (API v3)"},
+]
+
+
+@router.get("/strategy-autotrade", response_model=StrategyAutoTradeResponse)
+async def get_strategy_autotrade(
+    current_user: dict = Depends(get_current_user),
+) -> StrategyAutoTradeResponse:
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_autotrade"})
+    configs = doc.get("configs", {}) if doc else {}
+
+    items: list[StrategyAutoTradeItem] = []
+    for s in StrategyName:
+        strat_cfg = configs.get(s.value, {})
+        items.append(
+            StrategyAutoTradeItem(
+                key=s.value,
+                label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
+                enabled=bool(strat_cfg.get("enabled", False)),
+                broker=str(strat_cfg.get("broker", "paper")),
+                capitalAllocationPct=float(strat_cfg.get("capitalAllocationPct", 50.0)),
+                maxRiskPerTrade=float(strat_cfg.get("maxRiskPerTrade", 1100.0)),
+                slBufferPct=float(strat_cfg.get("slBufferPct", 20.0)),
+                leverage=5.0,
+                productType="INTRADAY",
+            )
+        )
+    return StrategyAutoTradeResponse(strategies=items, availableBrokers=AVAILABLE_BROKERS)
+
+
+@router.put("/strategy-autotrade", response_model=StrategyAutoTradeResponse)
+async def update_strategy_autotrade(
+    payload: StrategyAutoTradeUpdate,
+    current_user: dict = Depends(get_current_user),
+) -> StrategyAutoTradeResponse:
+    valid_keys = {s.value for s in StrategyName}
+    if payload.key not in valid_keys:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid strategy key: {payload.key!r}")
+
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "strategy_autotrade"})
+    configs = doc.get("configs", {}) if doc else {}
+
+    strat_cfg = dict(configs.get(payload.key, {}))
+    if payload.enabled is not None:
+        strat_cfg["enabled"] = payload.enabled
+    if payload.broker is not None:
+        strat_cfg["broker"] = payload.broker
+    if payload.capitalAllocationPct is not None:
+        strat_cfg["capitalAllocationPct"] = max(1.0, min(100.0, float(payload.capitalAllocationPct)))
+    if payload.maxRiskPerTrade is not None:
+        strat_cfg["maxRiskPerTrade"] = max(100.0, float(payload.maxRiskPerTrade))
+    if payload.slBufferPct is not None:
+        strat_cfg["slBufferPct"] = max(0.0, float(payload.slBufferPct))
+
+    strat_cfg["leverage"] = 5.0
+    strat_cfg["productType"] = "INTRADAY"
+    configs[payload.key] = strat_cfg
+
+    await db.user_settings.update_one(
+        {"userId": user_id, "type": "strategy_autotrade"},
+        {"$set": {"configs": configs, "userId": user_id}},
+        upsert=True,
+    )
+
+    items: list[StrategyAutoTradeItem] = []
+    for s in StrategyName:
+        sc = configs.get(s.value, {})
+        items.append(
+            StrategyAutoTradeItem(
+                key=s.value,
+                label=STRATEGY_DISPLAY_NAMES.get(s.value, s.value),
+                enabled=bool(sc.get("enabled", False)),
+                broker=str(sc.get("broker", "paper")),
+                capitalAllocationPct=float(sc.get("capitalAllocationPct", 50.0)),
+                maxRiskPerTrade=float(sc.get("maxRiskPerTrade", 1100.0)),
+                slBufferPct=float(sc.get("slBufferPct", 20.0)),
+                leverage=5.0,
+                productType="INTRADAY",
+            )
+        )
+    return StrategyAutoTradeResponse(strategies=items, availableBrokers=AVAILABLE_BROKERS)
+
+
+class WatchlistOption(BaseModel):
+    id: str
+    name: str
+    itemCount: int
+
+
+class TradingSettingsResponse(BaseModel):
+    paperCapital: float
+    slBufferPct: float
+    maxRiskPerTrade: float
+    maxOpenPositions: int
+    activeWatchlistId: str | None
+    availableWatchlists: list[WatchlistOption]
+
+
+class TradingSettingsUpdate(BaseModel):
+    paperCapital: float | None = None
+    slBufferPct: float | None = None
+    maxRiskPerTrade: float | None = None
+    maxOpenPositions: int | None = None
+    activeWatchlistId: str | None = None
+
+
+@router.get("/trading", response_model=TradingSettingsResponse)
+async def get_trading_settings(current_user: dict = Depends(get_current_user)) -> TradingSettingsResponse:
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "trading_config"})
+    cfg = doc.get("config", {}) if doc else {}
+
+    user_ids = [user_id]
+    if ObjectId.is_valid(user_id):
+        user_ids.append(ObjectId(user_id))
+    watchlists = await db.watchlists.find({"userId": {"$in": user_ids}}).to_list(100)
+    wl_options = [
+        WatchlistOption(id=str(w["_id"]), name=w.get("name", "Untitled"), itemCount=len(w.get("items", [])))
+        for w in watchlists
+    ]
+
+    return TradingSettingsResponse(
+        paperCapital=float(cfg.get("paperCapital", 100_000.0)),
+        slBufferPct=float(cfg.get("slBufferPct", 25.0)),
+        maxRiskPerTrade=float(cfg.get("maxRiskPerTrade", 1100.0)),
+        maxOpenPositions=int(cfg.get("maxOpenPositions", 10)),
+        activeWatchlistId=cfg.get("activeWatchlistId"),
+        availableWatchlists=wl_options,
+    )
+
+
+@router.put("/trading", response_model=TradingSettingsResponse)
+async def update_trading_settings(
+    payload: TradingSettingsUpdate,
+    current_user: dict = Depends(get_current_user),
+) -> TradingSettingsResponse:
+    db = get_db()
+    user_id = str(current_user["_id"])
+    doc = await db.user_settings.find_one({"userId": user_id, "type": "trading_config"})
+    cfg = dict(doc.get("config", {})) if doc else {}
+
+    if payload.paperCapital is not None:
+        cfg["paperCapital"] = max(10_000.0, float(payload.paperCapital))
+    if payload.slBufferPct is not None:
+        cfg["slBufferPct"] = max(1.0, min(100.0, float(payload.slBufferPct)))
+    if payload.maxRiskPerTrade is not None:
+        cfg["maxRiskPerTrade"] = max(100.0, float(payload.maxRiskPerTrade))
+    if payload.maxOpenPositions is not None:
+        cfg["maxOpenPositions"] = max(1, min(50, int(payload.maxOpenPositions)))
+    if payload.activeWatchlistId is not None:
+        cfg["activeWatchlistId"] = payload.activeWatchlistId if payload.activeWatchlistId not in ("all", "") else None
+
+    now = datetime.now(timezone.utc)
+    await db.user_settings.update_one(
+        {"userId": user_id, "type": "trading_config"},
+        {"$set": {"config": cfg, "userId": user_id, "updatedAt": now}},
+        upsert=True,
+    )
+
+    user_ids = [user_id]
+    if ObjectId.is_valid(user_id):
+        user_ids.append(ObjectId(user_id))
+    watchlists = await db.watchlists.find({"userId": {"$in": user_ids}}).to_list(100)
+    wl_options = [
+        WatchlistOption(id=str(w["_id"]), name=w.get("name", "Untitled"), itemCount=len(w.get("items", [])))
+        for w in watchlists
+    ]
+
+    return TradingSettingsResponse(
+        paperCapital=float(cfg.get("paperCapital", 100_000.0)),
+        slBufferPct=float(cfg.get("slBufferPct", 25.0)),
+        maxRiskPerTrade=float(cfg.get("maxRiskPerTrade", 1100.0)),
+        maxOpenPositions=int(cfg.get("maxOpenPositions", 10)),
+        activeWatchlistId=cfg.get("activeWatchlistId"),
+        availableWatchlists=wl_options,
+    )
+

@@ -109,6 +109,40 @@ def get_positions(access_token: str) -> dict:
     return _parse(resp)
 
 
+def get_orders(access_token: str) -> dict:
+    """Fetch order book for the day."""
+    resp = requests.get(f"{_AUTH_BASE}/orders", headers=_auth_header(access_token), timeout=15)
+    return _parse(resp)
+
+
+def place_order(access_token: str, order_data: dict[str, Any]) -> dict:
+    """Place a single order via Fyers v3 API (/orders/sync)."""
+    headers = {**_auth_header(access_token), "Content-Type": "application/json"}
+    resp = requests.post(f"{_AUTH_BASE}/orders/sync", headers=headers, json=order_data, timeout=15)
+    return _parse(resp)
+
+
+def modify_order(access_token: str, order_data: dict[str, Any]) -> dict:
+    """Modify an open order via Fyers v3 API (/orders/sync)."""
+    headers = {**_auth_header(access_token), "Content-Type": "application/json"}
+    resp = requests.put(f"{_AUTH_BASE}/orders/sync", headers=headers, json=order_data, timeout=15)
+    return _parse(resp)
+
+
+def cancel_order(access_token: str, order_id: str) -> dict:
+    """Cancel an open order via Fyers v3 API (/orders/sync)."""
+    headers = {**_auth_header(access_token), "Content-Type": "application/json"}
+    resp = requests.delete(f"{_AUTH_BASE}/orders/sync", headers=headers, json={"id": order_id}, timeout=15)
+    return _parse(resp)
+
+
+def exit_position(access_token: str, position_data: dict[str, Any]) -> dict:
+    """Exit an open position via Fyers v3 API (/positions)."""
+    headers = {**_auth_header(access_token), "Content-Type": "application/json"}
+    resp = requests.delete(f"{_AUTH_BASE}/positions", headers=headers, json=position_data, timeout=15)
+    return _parse(resp)
+
+
 INDEX_FYERS_SYMBOLS: dict[str, str] = {
     "NIFTY": "NSE:NIFTY50-INDEX",
     "NIFTY50": "NSE:NIFTY50-INDEX",

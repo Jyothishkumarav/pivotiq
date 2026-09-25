@@ -1,6 +1,6 @@
 import React from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
-import { Badge, Card, Text } from "@/components/ui";
+import { Card, Text } from "@/components/ui";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
 import { IntradaySnapshot, TradeSetup, WatchlistItem } from "@/types";
 import { formatCurrency, formatIstTime, formatPercent } from "@/utils/format";
@@ -10,6 +10,7 @@ interface Props {
   intraday?: IntradaySnapshot | null;
   onPress?: () => void;
   onRemove?: () => void;
+  onToggleAutoTrade?: (autoTrade: boolean) => void;
 }
 
 const TREND_META = {
@@ -97,7 +98,7 @@ function RemoveButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-export function StockRow({ item, intraday, onPress, onRemove }: Props) {
+export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade }: Props) {
   const isUp = (item.changePercent ?? 0) >= 0;
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === "web" && width >= layout.wideBreakpoint;
@@ -129,7 +130,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           }}
         >
           {/* Symbol + intraday badge */}
-          <View style={{ flex: 1.25, gap: 2 }}>
+          <View style={{ flex: 1.3, paddingHorizontal: 6, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
               <Text variant="subtitle">{item.symbol}</Text>
@@ -142,12 +143,12 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* LTP column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono">{effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}</Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {item.changePercent !== null && !intraday?.retestDate ? (
               <Text variant="mono" tone={isUp ? "positive" : "negative"}>
                 {formatPercent(item.changePercent)}
@@ -179,7 +180,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Setup column: pill only */}
-          <View style={{ flex: 0.65, alignItems: "flex-end" }}>
+          <View style={{ flex: 0.65, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               <SetupPill setup={intraday.tradeSetup} />
             ) : (
@@ -190,7 +191,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Entry column */}
-          <View style={{ flex: 0.85, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.9, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
               (() => {
                 const setup = intraday.tradeSetup;
@@ -241,7 +242,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
-          <View style={{ flex: 1.35, alignItems: "flex-end", gap: 2, paddingRight: spacing.sm }}>
+          <View style={{ flex: 1.4, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit" || intraday.tradeSetup.status === "pending_entry") ? (
               (() => {
                 const setup = intraday.tradeSetup;
@@ -301,7 +302,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 1.0, alignItems: "flex-end", paddingLeft: spacing.xs }}>
+          <View style={{ flex: 1.0, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -425,7 +426,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Δ Entry column: signed ₹ + % — positive means trade is going in your favor */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
                 const tradeEntry = intraday.tradeSetup.triggerPrice ?? intraday.tradeSetup.entry;
@@ -456,7 +457,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Δ SL column: room to stop loss (positive = safe, negative = past stop) */}
-          <View style={{ flex: 0.7, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
                 const governingSl =
@@ -491,7 +492,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Max Run column: peak profit gained after trigger (₹ + %) */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             intraday.tradeSetup.maxFavorableDelta !== undefined &&
@@ -512,7 +513,7 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
           </View>
 
           {/* Time column: trigger time on line 1, peak profit time on line 2 */}
-          <View style={{ flex: 0.65, alignItems: "flex-end", gap: 2 }}>
+          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup?.triggeredAt ? (
               <>
                 <Text variant="caption" tone="positive" numberOfLines={1}>
@@ -531,21 +532,46 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
             )}
           </View>
 
-          {/* Support column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end" }}>
-            {item.belowAllSupports ? (
-              <View style={{ alignSelf: "flex-end" }}>
-                <Badge label="Below supports" tone="warning" />
-              </View>
-            ) : item.distanceToSupportPercent !== null ? (
-              <View style={{ alignItems: "flex-end", gap: 2 }}>
-                <Text variant="mono">{formatPercent(item.distanceToSupportPercent)}</Text>
-                {item.nearestSupport !== null ? (
-                  <Text variant="caption" tone="muted">
-                    {formatCurrency(item.nearestSupport)}
-                  </Text>
-                ) : null}
-              </View>
+          {/* Live Trade column */}
+          <View style={{ flex: 0.95, alignItems: "flex-end", paddingHorizontal: 6 }}>
+            {onToggleAutoTrade ? (
+              <Pressable
+                onPress={(e: any) => {
+                  e?.stopPropagation?.();
+                  onToggleAutoTrade(!item.autoTrade);
+                }}
+                hitSlop={6}
+                style={({ hovered: btnHovered }: any) => ({
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: radius.full,
+                  backgroundColor: item.autoTrade ? "rgba(61, 219, 159, 0.16)" : colors.surfaceElevated,
+                  borderWidth: 1.5,
+                  borderColor: item.autoTrade ? colors.positive : btnHovered ? colors.border : colors.borderSubtle,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                })}
+              >
+                <View
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 4,
+                    backgroundColor: item.autoTrade ? colors.positive : colors.textMuted,
+                  }}
+                />
+                <Text
+                  style={{
+                    fontSize: 10,
+                    fontWeight: "700",
+                    letterSpacing: 0.3,
+                    color: item.autoTrade ? colors.positive : colors.textSecondary,
+                  }}
+                >
+                  {item.autoTrade ? "FYERS" : "PAPER"}
+                </Text>
+              </Pressable>
             ) : (
               <Text variant="mono" tone="muted">
                 —
@@ -553,12 +579,10 @@ export function StockRow({ item, intraday, onPress, onRemove }: Props) {
             )}
           </View>
 
-          {/* Remove */}
-          {onRemove ? (
-            <View style={{ width: 42, alignItems: "flex-end" }}>
-              <RemoveButton onPress={onRemove} />
-            </View>
-          ) : null}
+          {/* Action / remove column */}
+          <View style={{ width: 42, alignItems: "flex-end" }}>
+            {onRemove ? <RemoveButton onPress={onRemove} /> : null}
+          </View>
         </Card>
       )}
     </Pressable>

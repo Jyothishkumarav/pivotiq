@@ -206,6 +206,30 @@ export function TradePanel({ symbol, ltp, dayChangePercent }: Props) {
         ) : null}
       </View>
 
+      {segment === "intraday" && side === "buy" ? (
+        <View style={{ gap: spacing.xs }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text variant="caption" tone="secondary">Tight Stop-Loss (Optional, auto-places SL order)</Text>
+            <Badge label="20% Buffer" tone="neutral" />
+          </View>
+          <TextInput
+            placeholder={`e.g. ${(pricePreview * 0.98).toFixed(2)}`}
+            placeholderTextColor={colors.textMuted}
+            onChangeText={(v) => setLimitPrice(v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+            style={{
+              height: 40,
+              paddingHorizontal: spacing.md,
+              borderRadius: radius.sm,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.background,
+              color: colors.textPrimary,
+            }}
+          />
+        </View>
+      ) : null}
+
       <View
         style={{
           backgroundColor: colors.background,
@@ -218,6 +242,9 @@ export function TradePanel({ symbol, ltp, dayChangePercent }: Props) {
       >
         <SummaryRow label={orderType === "market" ? "Estimated price" : "Limit price"} value={formatCurrency(pricePreview)} />
         <SummaryRow label="Quantity" value={String(qtyNum)} />
+        {segment === "intraday" && (
+          <SummaryRow label="5x Intraday Margin" value={formatCurrency(orderValue / 5.0)} />
+        )}
         <View style={{ height: 1, backgroundColor: colors.divider }} />
         <SummaryRow label="Order value" value={formatCurrency(orderValue)} strong />
       </View>

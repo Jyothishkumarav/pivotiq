@@ -92,3 +92,19 @@ def get_candles(
 
 def symbol_exists(symbol: str) -> bool:
     return _get().symbol_exists(symbol)
+
+
+INDEX_SYMBOLS = {
+    "NIFTY", "NIFTY50", "NIFTY 50", "BANKNIFTY", "NIFTYBANK", "NIFTY BANK", "BANK NIFTY",
+    "FINNIFTY", "MIDCPNIFTY", "SENSEX", "NIFTY_50", "NIFTY_BANK", "CNXIT", "NIFTYIT"
+}
+
+
+def is_index_symbol(symbol: str) -> bool:
+    """Check if symbol is a broad market index (e.g. NIFTY 50, BANKNIFTY) rather than an equity stock."""
+    if not symbol:
+        return False
+    clean = symbol.upper().strip().replace(" ", "").replace("_", "")
+    return clean in {
+        "NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "CNXIT", "NIFTYIT"
+    } or symbol.upper().strip() in INDEX_SYMBOLS

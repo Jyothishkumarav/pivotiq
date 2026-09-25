@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -7,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, with_fyers_context
 from app.schemas.watchlist import (
     WatchlistCreate,
+    WatchlistItemAutoTradeUpdate,
     WatchlistItemIn,
     WatchlistItemOut,
     WatchlistOut,
@@ -14,15 +16,22 @@ from app.schemas.watchlist import (
     WatchlistReorder,
 )
 from app.services import market_data, strategies, support_levels
+from app.services.order_execution import sync_watchlist_entered_trades
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"], dependencies=[Depends(with_fyers_context)])
 
 
 def _enrich_item(raw_item: dict) -> WatchlistItemOut:
     symbol = raw_item["symbol"]
+    auto_trade = bool(raw_item.get("autoTrade", False))
     quote = market_data.get_quote(symbol)
     if quote is None:
-        return WatchlistItemOut(symbol=symbol, exchange=raw_item["exchange"], addedAt=raw_item["addedAt"])
+        return WatchlistItemOut(
+            symbol=symbol,
+            exchange=raw_item["exchange"],
+            addedAt=raw_item["addedAt"],
+            autoTrade=auto_trade,
+        )
 
     nearest = support_levels.nearest_support_below(symbol, quote.ltp)
     below_all = nearest is None
@@ -34,6 +43,7 @@ def _enrich_item(raw_item: dict) -> WatchlistItemOut:
         symbol=symbol,
         exchange=raw_item["exchange"],
         addedAt=raw_item["addedAt"],
+        autoTrade=auto_trade,
         ltp=quote.ltp,
         changePercent=quote.changePercent,
         nearestSupport=nearest,
@@ -84,6 +94,10 @@ async def _get_owned_watchlist(watchlist_id: str, user_id: ObjectId) -> dict:
 @router.get("", response_model=list[WatchlistOut])
 async def list_watchlists(current_user: dict = Depends(get_current_user)) -> list[WatchlistOut]:
     db = get_db()
+    try:
+        asyncio.create_task(sync_watchlist_entered_trades(current_user["_id"], db))
+    except Exception:
+        pass
     cursor = db.watchlists.find({"userId": current_user["_id"]}).sort("createdAt", 1)
     result = []
     async for doc in cursor:
@@ -132,6 +146,12 @@ async def delete_watchlist(watchlist_id: str, current_user: dict = Depends(get_c
 
 @router.post("/{watchlist_id}/items", response_model=WatchlistOut, status_code=status.HTTP_201_CREATED)
 async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+    if market_data.is_index_symbol(payload.symbol):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{payload.symbol} is a broad-market index. Only tradeable equity stocks can be added to watchlists.",
+        )
+
     if not market_data.symbol_exists(payload.symbol):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found")
 
@@ -142,12 +162,49 @@ async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: di
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Symbol already in watchlist")
 
     now = datetime.now(timezone.utc)
-    new_item = {"symbol": symbol, "exchange": payload.exchange, "addedAt": now}
+    new_item = {
+        "symbol": symbol,
+        "exchange": payload.exchange,
+        "addedAt": now,
+        "autoTrade": bool(payload.autoTrade),
+    }
     await db.watchlists.update_one(
         {"_id": doc["_id"]}, {"$push": {"items": new_item}, "$set": {"updatedAt": now}}
     )
     doc["items"] = doc.get("items", []) + [new_item]
     enriched = [_enrich_item(i) for i in doc["items"]]
+    return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
+
+
+@router.put("/{watchlist_id}/items/{symbol}/autotrade", response_model=WatchlistOut)
+async def toggle_item_autotrade(
+    watchlist_id: str,
+    symbol: str,
+    payload: WatchlistItemAutoTradeUpdate,
+    current_user: dict = Depends(get_current_user),
+) -> WatchlistOut:
+    """Toggle auto-trade enablement for an individual watchlist item.
+    When enabled, live broker orders (e.g. Fyers) hit alongside paper trade upon strategy trigger.
+    When disabled, only paper trade hits.
+    """
+    db = get_db()
+    doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
+    symbol_upper = symbol.upper()
+    now = datetime.now(timezone.utc)
+
+    res = await db.watchlists.update_one(
+        {"_id": doc["_id"], "items.symbol": symbol_upper},
+        {"$set": {"items.$.autoTrade": payload.autoTrade, "updatedAt": now}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Symbol not found in watchlist")
+
+    for i in doc.get("items", []):
+        if i["symbol"] == symbol_upper:
+            i["autoTrade"] = payload.autoTrade
+            break
+    doc["updatedAt"] = now
+    enriched = [_enrich_item(i) for i in doc.get("items", [])]
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from app.database import get_db
 from app.dependencies import get_current_user, with_fyers_context
 from app.schemas.stock import (
     CandlesResponse,
@@ -24,6 +25,7 @@ from app.services.notification_client import (
     notify_stop_loss_hit,
     notify_trade_setup_triggered,
 )
+from app.services.order_execution import trigger_autotrade_if_enabled
 
 router = APIRouter(prefix="/stocks", tags=["stocks"], dependencies=[Depends(with_fyers_context)])
 
@@ -130,6 +132,7 @@ async def get_intraday_snapshot(
     if not retest_date:
         asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snapshot, current_user["_id"]))
         asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snapshot, current_user["_id"]))
+        asyncio.create_task(trigger_autotrade_if_enabled(snapshot, current_user["_id"], get_db()))
     return snapshot
 
 
@@ -180,6 +183,7 @@ async def batch_intraday_snapshots(
                     continue
                 asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id, index_snaps))
                 asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id, index_snaps))
+                asyncio.create_task(trigger_autotrade_if_enabled(snap, user_id, get_db()))
     return IntradaySnapshotsResponse(
         snapshots={sym: snap for sym, snap in results},
         fetchedAt=datetime.now(timezone.utc),

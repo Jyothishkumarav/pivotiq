@@ -359,3 +359,60 @@ flowchart LR
 - **Fire-and-forget integration**: the backend never blocks a user-facing request on the notification service being up; failures are logged, not raised.
 - **Idempotency/dedup**: one trigger notification per symbol per trading day, preventing alert spam from repeated polling.
 - **Independent deployability**: three services, three `Dockerfile`s, one `docker-compose.yml`, no cross-service imports.
+
+---
+
+## 11. Automated Trade Execution, Sizing & 5x Leverage Architecture
+
+### 11.1 Leverage & Capital Baseline
+* **Baseline Intraday Capital**: ₹100,000 (Configurable via `paperCapital` in user settings).
+* **Intraday Leverage**: **5.0x** (`ProductType.INTRADAY` / MIS).
+* **Total Purchasing Power**: ₹100,000 × 5.0 = **₹500,000**.
+* **Margin Requirement**:
+  $$\text{Margin Required} = \frac{\text{Quantity} \times \text{Stock Price}}{5.0}$$
+
+### 11.2 Equal Margin Allocation Rule
+To prevent early trades from exhausting capital and starving later setups (e.g. avoiding 50% capital cascades):
+1. **Target Margin Per Trade**:
+   $$\text{Max Trade Margin} = \min\left(\text{Available Capital}, \frac{\text{Total Account Capital}}{10}\right) \approx ₹10,000$$
+2. **Purchasing Power Per Trade**:
+   $$\text{Purchasing Power} = \text{Max Trade Margin} \times 5.0 \approx ₹50,000$$
+3. **Quantity by Purchasing Power**:
+   $$\text{Qty}_{\text{leverage}} = \left\lfloor \frac{\text{Purchasing Power}}{\text{Stock Price}} \right\rfloor$$
+
+### 11.3 Dual-Constraint Position Sizing (Risk Bounding)
+All orders are bounded by **both** leverage purchasing power and strict risk management:
+1. **Buffered Stop-Loss**:
+   $$\Delta_{\text{tight}} = |\text{Entry Price} - \text{Tight SL}|$$
+   $$\text{Buffered SL} = \begin{cases}
+     \text{Tight SL} - (\Delta_{\text{tight}} \times 25\%), & \text{for BUY / Long} \\
+     \text{Tight SL} + (\Delta_{\text{tight}} \times 25\%), & \text{for SELL / Short}
+   \end{cases}$$
+2. **Max Risk Per Trade**: Bounded at **₹1,100** max risk:
+   $$\text{Per Share Risk} = |\text{Entry Price} - \text{Buffered SL}|$$
+   $$\text{Qty}_{\text{risk}} = \left\lfloor \frac{₹1,100}{\text{Per Share Risk}} \right\rfloor$$
+3. **Final Order Quantity**:
+   $$\text{Final Qty} = \min(\text{Qty}_{\text{leverage}}, \text{Qty}_{\text{risk}})$$
+4. **Margin Availability Safety Check**:
+   $$\frac{\text{Final Qty} \times \text{Stock Price}}{5.0} \le \text{Available Margin}$$
+
+### 11.4 Session & Time Window Rules
+* **Entry Window**: Strictly **09:30 AM to 02:30 PM IST** (04:00 to 09:00 UTC). Fresh entry orders outside this window are automatically rejected.
+* **Max Open Positions**: Strictly capped at **10 concurrent positions**.
+* **Intraday Session Isolation**:
+  * Intraday trades (MIS) are strictly scoped per calendar day (`executedAt` within the session's 24-hour UTC window).
+  * Positions never bleed across days. Every day resets with fresh ₹100,000 simulated capital.
+
+### 11.5 Multi-Broker Routing
+```mermaid
+flowchart TD
+    Setup[Strategy Setup Triggered] --> CheckAuto{Is AutoTrade ON in Watchlist?}
+    CheckAuto -->|Yes| FyersRoute[Fyers Broker: API v3]
+    CheckAuto -->|No| PaperRoute[Paper Sandbox: MongoDB Ledger]
+    
+    FyersRoute --> FyersEntry[Place Market Entry: Product=INTRADAY]
+    FyersEntry --> FyersSL[Place Immediate SL-M Order: Stop=BufferedSL]
+    
+    PaperRoute --> PaperEntry[Place Market Entry: Recorded in paper_trades]
+    PaperRoute --> PaperSL[Place Open SL-M Order: Evaluated via _check_sl_triggers]
+```

@@ -21,7 +21,7 @@ function openStock(symbol: string) {
   return `/stock/${symbol}` as const;
 }
 
-type SortKey = "symbol" | "ltp" | "dayChange" | "support";
+type SortKey = "symbol" | "ltp" | "dayChange";
 type SortDir = "asc" | "desc";
 
 interface SortState {
@@ -36,18 +36,18 @@ const COLUMN_HEADERS: {
   align: "flex-start" | "flex-end";
   sortable?: boolean;
 }[] = [
-  { key: "symbol", label: "Symbol", flex: 1.25, align: "flex-start", sortable: true },
-  { key: "ltp", label: "LTP", flex: 0.75, align: "flex-end", sortable: true },
-  { key: "dayChange", label: "Day", flex: 0.7, align: "flex-end", sortable: true },
+  { key: "symbol", label: "Symbol", flex: 1.3, align: "flex-start", sortable: true },
+  { key: "ltp", label: "LTP", flex: 0.8, align: "flex-end", sortable: true },
+  { key: "dayChange", label: "Day", flex: 0.75, align: "flex-end", sortable: true },
   { key: "symbol", label: "Setup", flex: 0.65, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Entry", flex: 0.85, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Stop Loss", flex: 1.35, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Entry", flex: 0.9, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Stop Loss", flex: 1.4, align: "flex-end", sortable: false },
   { key: "symbol", label: "Status", flex: 1.0, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ Entry", flex: 0.7, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ SL", flex: 0.7, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Max Run", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Time", flex: 0.65, align: "flex-end", sortable: false },
-  { key: "support", label: "Support", flex: 0.75, align: "flex-end", sortable: true },
+  { key: "symbol", label: "Δ Entry", flex: 0.75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Δ SL", flex: 0.75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Max Run", flex: 0.8, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Time", flex: 0.75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Live Trade", flex: 0.95, align: "flex-end", sortable: false },
 ];
 
 /** Column value extractors. `null` values are always pushed to the end regardless of direction. */
@@ -55,7 +55,6 @@ const VALUE_EXTRACTORS: Record<SortKey, (i: WatchlistItem) => string | number | 
   symbol: (i) => i.symbol,
   ltp: (i) => i.ltp,
   dayChange: (i) => i.changePercent,
-  support: (i) => i.distanceToSupportPercent,
 };
 
 function sortItems(items: WatchlistItem[], state: SortState): WatchlistItem[] {
@@ -609,7 +608,7 @@ function SortableHeader({ state, onChange }: { state: SortState; onChange: (next
     } else {
       // Support sort defaults to ascending (closest first). Others start descending
       // (highest LTP / biggest day gainer first), which feels most useful.
-      onChange({ key, dir: key === "symbol" || key === "support" ? "asc" : "desc" });
+      onChange({ key, dir: key === "symbol" ? "asc" : "desc" });
     }
   };
 
@@ -635,8 +634,8 @@ function SortableHeader({ state, onChange }: { state: SortState; onChange: (next
               alignItems: col.align,
               flexDirection: "row",
               justifyContent: col.align === "flex-end" ? "flex-end" : "flex-start",
-              gap: 6,
-              paddingHorizontal: spacing.xs,
+              gap: 4,
+              paddingHorizontal: 6,
               paddingVertical: 2,
               borderRadius: 4,
               backgroundColor: hovered && sortable ? colors.surfaceElevated : "transparent",
@@ -755,6 +754,12 @@ export default function WatchlistDetailScreen() {
 
   const removeMutation = useMutation({
     mutationFn: (symbol: string) => watchlistsApi.removeItem(id, symbol),
+    onSuccess: invalidate,
+  });
+
+  const toggleAutoTradeMutation = useMutation({
+    mutationFn: ({ symbol, autoTrade }: { symbol: string; autoTrade: boolean }) =>
+      watchlistsApi.toggleItemAutoTrade(id, symbol, autoTrade),
     onSuccess: invalidate,
   });
 
@@ -1033,12 +1038,17 @@ export default function WatchlistDetailScreen() {
             </Card>
           ) : (
             <>
-              {/* Subtle section label */}
-              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, marginTop: spacing.xs, marginBottom: 2 }}>
-                <Text variant="caption" tone="muted" style={{ textTransform: "uppercase", letterSpacing: 1, fontWeight: "600", fontSize: 11 }}>
-                  Watchlist Stocks ({watchlist.items.length})
-                </Text>
-                <View style={{ flex: 1, height: 1, backgroundColor: colors.borderSubtle }} />
+              {/* Subtle section label with auto-trade counter */}
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.sm, marginTop: spacing.xs, marginBottom: 2 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Text variant="caption" tone="muted" style={{ textTransform: "uppercase", letterSpacing: 1, fontWeight: "600", fontSize: 11 }}>
+                    Watchlist Stocks ({watchlist.items.length})
+                  </Text>
+                  <Text variant="caption" tone="secondary" style={{ fontSize: 11 }}>
+                    · {watchlist.items.filter((i) => i.autoTrade).length} armed for Live Broker (Paper default on all)
+                  </Text>
+                </View>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.borderSubtle, marginLeft: spacing.md }} />
               </View>
 
               {sortItems(watchlist.items, sort).map((item) => (
@@ -1051,6 +1061,9 @@ export default function WatchlistDetailScreen() {
                     if (href) router.push(href);
                   }}
                   onRemove={() => removeMutation.mutate(item.symbol)}
+                  onToggleAutoTrade={(autoTrade) =>
+                    toggleAutoTradeMutation.mutate({ symbol: item.symbol, autoTrade })
+                  }
                 />
               ))}
             </>

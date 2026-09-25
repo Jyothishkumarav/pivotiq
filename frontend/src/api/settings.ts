@@ -24,6 +24,29 @@ export interface StrategyNotificationsResponse {
   availableChannels?: TelegramChannelOption[];
 }
 
+export interface WatchlistOption {
+  id: string;
+  name: string;
+  itemCount: number;
+}
+
+export interface TradingSettingsResponse {
+  paperCapital: number;
+  slBufferPct: number;
+  maxRiskPerTrade: number;
+  maxOpenPositions: number;
+  activeWatchlistId: string | null;
+  availableWatchlists: WatchlistOption[];
+}
+
+export interface TradingSettingsUpdate {
+  paperCapital?: number;
+  slBufferPct?: number;
+  maxRiskPerTrade?: number;
+  maxOpenPositions?: number;
+  activeWatchlistId?: string | null;
+}
+
 export const settingsApi = {
   getDataSource: () => apiClient.get<DataSourceResponse>("/settings/data-source"),
   setDataSource: (mode: DataSourceMode) => apiClient.put<DataSourceResponse>("/settings/data-source", { mode }),
@@ -39,5 +62,14 @@ export const settingsApi = {
       telegramChannelId,
       telegramChannelName,
     }),
+  getStrategyAutoTrade: () =>
+    apiClient.get<import("@/types").StrategyAutoTradeResponse>("/settings/strategy-autotrade"),
+  updateStrategyAutoTrade: (payload: import("@/types").StrategyAutoTradeUpdate) =>
+    apiClient.put<import("@/types").StrategyAutoTradeResponse>("/settings/strategy-autotrade", payload),
+  getTradingSettings: () =>
+    apiClient.get<TradingSettingsResponse>("/settings/trading"),
+  updateTradingSettings: (payload: TradingSettingsUpdate) =>
+    apiClient.put<TradingSettingsResponse>("/settings/trading", payload),
 };
+
 
