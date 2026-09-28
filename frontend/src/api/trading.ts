@@ -84,4 +84,5 @@ export const tradingApi = {
       query: { broker },
     }),
   exitPosition: (payload: ExitPositionPayload) => apiClient.post<BrokerOrder>("/trades/positions/exit", payload),
+  resetPaperAccount: () => apiClient.post<{ status: string; message: string }>("/trades/paper/reset"),
 };

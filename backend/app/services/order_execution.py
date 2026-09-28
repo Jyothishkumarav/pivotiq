@@ -96,10 +96,10 @@ def calculate_trade_sizing(
 
     # 2. Capital allocation with 5x leverage:
     # Max trade margin per position is determined by capital_allocation_pct of available_capital,
-    # or capped at account_capital / max_open_positions.
-    max_trade_margin = min(available_capital, available_capital * (capital_allocation_pct / 100.0))
-    if account_capital != DEFAULT_ACCOUNT_CAPITAL or max_open_positions != MAX_OPEN_POSITIONS:
-        max_trade_margin = min(max_trade_margin, account_capital / max(1, max_open_positions))
+    # and strictly capped at account_capital / max_open_positions.
+    max_position_cap = account_capital / max(1, max_open_positions)
+    pct_margin = available_capital * (capital_allocation_pct / 100.0) if capital_allocation_pct else max_position_cap
+    max_trade_margin = min(available_capital, pct_margin, max_position_cap)
     max_trade_margin = max(0.0, max_trade_margin)
     purchasing_power = max_trade_margin * leverage
 
@@ -582,15 +582,38 @@ async def trigger_autotrade_if_enabled(
     # Check if this item is toggled ON for Live Trade in watchlist
     is_live_trade = await is_symbol_autotrade_enabled(user_id, sym_upper, db)
 
-    res_to_return = None
+    user_ids = [user_id, str(user_id)]
+    if ObjectId.is_valid(str(user_id)):
+        user_ids.append(ObjectId(str(user_id)))
+
+    start_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+    end_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
+    res_to_return: ExecuteOrderResult | None = None
 
     # ---------------------------------------------------------
     # 1. ALWAYS EXECUTE IN PAPER (UNIVERSAL BASELINE DEFAULT)
     # ---------------------------------------------------------
     paper_key = f"autotrade:paper:{sym_upper}:{strategy_name}:{date_str}"
-    if not (cache and cache.exists(paper_key)):
+    paper_already_done = bool(cache and cache.exists(paper_key))
+    if not paper_already_done and db is not None:
+        existing_paper = await db.paper_orders.find_one({
+            "userId": {"$in": user_ids},
+            "symbol": sym_upper,
+            "purpose": "entry",
+            "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+        })
+        if existing_paper:
+            paper_already_done = True
+            if cache:
+                cache.set_json(paper_key, {"executed": True}, ttl_seconds=8 * 3600)
+
+    if not paper_already_done:
         try:
             from app.services.brokers.paper_broker import PaperBroker
+            from app.services import trading_service
+            cfg = await trading_service.get_user_trading_config(user_id, db)
+            cfg_max_pos = int(cfg.get("maxOpenPositions", MAX_OPEN_POSITIONS))
+            alloc_pct = round(100.0 / max(1, cfg_max_pos), 2)
             paper_broker = PaperBroker(user_id=user_id, db=db)
             paper_res = await execute_order_with_sl(
                 broker=paper_broker,
@@ -598,9 +621,9 @@ async def trigger_autotrade_if_enabled(
                 side=action,
                 stock_price=entry_price,
                 tight_sl=tight_sl,
-                capital_allocation_pct=50.0,
-                max_risk_amount=1100.0,
-                sl_buffer_pct=20.0,
+                capital_allocation_pct=alloc_pct,
+                max_risk_amount=float(cfg.get("maxRiskPerTrade", 1100.0)),
+                sl_buffer_pct=float(cfg.get("slBufferPct", 20.0)),
                 strategy=strategy_name,
                 db=db,
                 user_id=user_id,
@@ -617,12 +640,22 @@ async def trigger_autotrade_if_enabled(
     # ---------------------------------------------------------
     if is_live_trade:
         broker_key = f"autotrade:fyers:{sym_upper}:{strategy_name}:{date_str}"
-        if not (cache and cache.exists(broker_key)):
+        fyers_already_done = bool(cache and cache.exists(broker_key))
+        if not fyers_already_done and db is not None:
+            existing_chain = await db.order_chains.find_one({
+                "userId": {"$in": user_ids},
+                "symbol": sym_upper,
+                "broker": "fyers",
+                "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+            })
+            if existing_chain:
+                fyers_already_done = True
+                if cache:
+                    cache.set_json(broker_key, {"executed": True}, ttl_seconds=8 * 3600)
+
+        if not fyers_already_done:
             strat_cfg = {}
             try:
-                user_ids = [str(user_id)]
-                if ObjectId.is_valid(str(user_id)):
-                    user_ids.append(ObjectId(str(user_id)))
                 doc = await db.user_settings.find_one({"userId": {"$in": user_ids}, "type": "strategy_autotrade"})
                 if doc:
                     strat_cfg = doc.get("configs", {}).get(strategy_name, {})
@@ -770,22 +803,8 @@ async def sync_watchlist_entered_trades(
                 logger.info("No available margin remaining (₹%.2f) for %s, stopping auto-sync", current_funds.available_balance, date_str)
                 break
 
-            order_key = f"autotrade:{'fyers' if is_live else 'paper'}:{sym}:{strat}:{date_str}"
-            if not target_date and cache and cache.exists(order_key):
-                continue
-
-            # Check DB to prevent duplicate executions for this date
             start_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
             end_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
-            existing_chain = await db.order_chains.find_one({
-                "userId": {"$in": user_ids},
-                "symbol": sym,
-                "strategy": strat,
-                "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
-            })
-            if existing_chain:
-                continue
-
             triggered_at = t.get("triggeredAt")
 
             # -------------------------------------------------------------

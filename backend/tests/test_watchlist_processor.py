@@ -131,6 +131,8 @@ async def test_dual_execution_paper_always_and_fyers_conditional():
         "_id": ObjectId(),
         "items": [{"symbol": "SBIN", "autoTrade": False}]
     })
+    mock_db.paper_orders.find_one = AsyncMock(return_value=None)
+    mock_db.order_chains.find_one = AsyncMock(return_value=None)
 
     with patch("app.services.order_execution.execute_order_with_sl", new_callable=AsyncMock) as mock_exec, \
          patch("app.services.cache.get_cache_client") as mock_cache:

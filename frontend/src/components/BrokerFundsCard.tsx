@@ -1,6 +1,6 @@
 import React from "react";
 import { View } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Card, Text } from "@/components/ui";
 import { tradingApi } from "@/api/trading";
 import { colors, spacing } from "@/theme/tokens";
@@ -13,10 +13,21 @@ interface Props {
 }
 
 export function BrokerFundsCard({ broker, onOpenQuickTrade, date }: Props) {
+  const queryClient = useQueryClient();
   const { data: funds, isLoading } = useQuery({
     queryKey: ["trades-funds", broker, date],
     queryFn: () => tradingApi.getFunds(broker, date),
     refetchInterval: 15000,
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: tradingApi.resetPaperAccount,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["trades-funds"] });
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolio-summary"] });
+    },
   });
 
   const avail = funds?.available_balance || 0;
@@ -45,7 +56,26 @@ export function BrokerFundsCard({ broker, onOpenQuickTrade, date }: Props) {
           <Badge label="5x MIS Leverage" tone="neutral" />
         </View>
 
-        <Button label="+ Quick Trade (Buy + SL)" size="sm" onPress={onOpenQuickTrade} />
+        <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+          {broker !== "fyers" && (
+            <Button
+              label="Reset Paper (1L)"
+              size="sm"
+              variant="secondary"
+              loading={resetMutation.isPending}
+              onPress={() => {
+                if (typeof window !== "undefined" && window.confirm) {
+                  if (window.confirm("Reset paper trading portfolio back to fresh ₹1,00,000 capital?")) {
+                    resetMutation.mutate();
+                  }
+                } else {
+                  resetMutation.mutate();
+                }
+              }}
+            />
+          )}
+          <Button label="+ Quick Trade (Buy + SL)" size="sm" onPress={onOpenQuickTrade} />
+        </View>
       </View>
 
       <View

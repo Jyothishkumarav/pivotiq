@@ -81,14 +81,23 @@ async def fill_pending_limits(db: AsyncIOMotorDatabase, user_id: ObjectId) -> in
 
 
 def compute_positions(trades: list[dict], access_token: str | None = None) -> list[PositionOut]:
-    filled = [t for t in trades if t.get("status") == OrderStatus.filled.value]
+    filled = [t for t in trades if str(t.get("status", "")).lower() == OrderStatus.filled.value]
     filled.sort(key=lambda t: t.get("executedAt") or datetime.min.replace(tzinfo=timezone.utc))
 
     state: dict[tuple[str, str], dict] = defaultdict(
-        lambda: {"netQty": 0, "avgPrice": 0.0, "firstBoughtAt": None, "lastTransactionAt": None}
+        lambda: {
+            "netQty": 0,
+            "avgPrice": 0.0,
+            "entryAvgPrice": 0.0,
+            "totalEntryQty": 0,
+            "lastExitPrice": 0.0,
+            "realizedPnl": 0.0,
+            "firstBoughtAt": None,
+            "lastTransactionAt": None,
+        }
     )
     for t in filled:
-        key = (t["symbol"], t.get("segment", Segment.intraday.value))
+        key = (str(t.get("symbol", "")).upper(), t.get("segment", Segment.intraday.value))
         s = state[key]
         exec_at = t.get("executedAt") or datetime.now(timezone.utc)
         if isinstance(exec_at, datetime) and exec_at.tzinfo is None:
@@ -101,41 +110,50 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
         if s["netQty"] == 0:
             s["firstBoughtAt"] = exec_at
             s["avgPrice"] = price
+            s["entryAvgPrice"] = price
+            s["totalEntryQty"] += qty
             s["netQty"] = qty if side == "buy" else -qty
         elif s["netQty"] > 0:
             if side == "buy":
                 new_qty = s["netQty"] + qty
                 s["avgPrice"] = ((s["avgPrice"] * s["netQty"]) + (price * qty)) / new_qty if new_qty else price
+                s["entryAvgPrice"] = s["avgPrice"]
+                s["totalEntryQty"] += qty
                 s["netQty"] = new_qty
-            else:
+            else:  # selling to close/reduce long
                 closed = min(qty, s["netQty"])
+                s["realizedPnl"] += (price - s["avgPrice"]) * closed
+                s["lastExitPrice"] = price
                 rem = qty - closed
                 s["netQty"] -= closed
                 if rem > 0:
                     s["netQty"] = -rem
                     s["avgPrice"] = price
+                    s["entryAvgPrice"] = price
+                    s["totalEntryQty"] += rem
                     s["firstBoughtAt"] = exec_at
-                elif s["netQty"] == 0:
-                    s["avgPrice"] = 0.0
-                    s["firstBoughtAt"] = None
         else:  # s["netQty"] < 0 (Short position)
             curr_abs = abs(s["netQty"])
             if side == "sell":
                 new_abs = curr_abs + qty
                 s["avgPrice"] = ((s["avgPrice"] * curr_abs) + (price * qty)) / new_abs if new_abs else price
+                s["entryAvgPrice"] = s["avgPrice"]
+                s["totalEntryQty"] += qty
                 s["netQty"] = -new_abs
-            else:  # side == "buy" (covering short)
+            else:  # side == "buy" (covering short, e.g. SL hit)
                 closed = min(qty, curr_abs)
+                s["realizedPnl"] += (s["avgPrice"] - price) * closed
+                s["lastExitPrice"] = price
                 rem = qty - closed
                 new_abs = curr_abs - closed
                 if rem > 0:
                     s["netQty"] = rem
                     s["avgPrice"] = price
+                    s["entryAvgPrice"] = price
+                    s["totalEntryQty"] += rem
                     s["firstBoughtAt"] = exec_at
                 elif new_abs == 0:
                     s["netQty"] = 0
-                    s["avgPrice"] = 0.0
-                    s["firstBoughtAt"] = None
                 else:
                     s["netQty"] = -new_abs
 
@@ -143,28 +161,45 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
 
     positions: list[PositionOut] = []
     for (symbol, segment), s in state.items():
-        if s["netQty"] == 0 or is_index_symbol(symbol):
+        if is_index_symbol(symbol):
             continue
+        if s["totalEntryQty"] == 0 and s["netQty"] == 0:
+            continue
+
         quote = market_data.get_quote(symbol, access_token=access_token)
-        ltp = float(quote.ltp) if quote is not None else float(s["avgPrice"])
         change_pct = float(quote.changePercent) if quote is not None else 0.0
         last_updated = quote.lastUpdated if quote is not None else (s["lastTransactionAt"] or datetime.now(timezone.utc))
 
-        abs_qty = abs(s["netQty"])
-        invested = round(s["avgPrice"] * abs_qty, 2)
-        current_value = round(ltp * abs_qty, 2)
-        if s["netQty"] > 0:
-            pnl = round(current_value - invested, 2)
+        if s["netQty"] != 0:
+            # Active open position
+            ltp = float(quote.ltp) if quote is not None else float(s["avgPrice"])
+            abs_qty = abs(s["netQty"])
+            invested = round(s["avgPrice"] * abs_qty, 2)
+            current_value = round(ltp * abs_qty, 2)
+            if s["netQty"] > 0:
+                unrealized = current_value - invested
+            else:
+                unrealized = invested - current_value
+            pnl = round(s["realizedPnl"] + unrealized, 2)
+            pnl_pct = round((pnl / invested) * 100, 2) if invested else 0.0
+            display_avg = round(s["avgPrice"], 2)
         else:
-            pnl = round(invested - current_value, 2)
-        pnl_pct = round((pnl / invested) * 100, 2) if invested else 0.0
+            # Closed position (SL Hit or squared off)
+            exit_price = s["lastExitPrice"] if s["lastExitPrice"] > 0 else (float(quote.ltp) if quote else s["entryAvgPrice"])
+            ltp = round(exit_price, 2)
+            invested = 0.0
+            current_value = 0.0
+            pnl = round(s["realizedPnl"], 2)
+            initial_val = s["entryAvgPrice"] * max(1, s["totalEntryQty"])
+            pnl_pct = round((pnl / initial_val) * 100, 2) if initial_val else 0.0
+            display_avg = round(s["entryAvgPrice"], 2)
 
         positions.append(
             PositionOut(
                 symbol=symbol,
                 segment=Segment(segment),
                 netQty=s["netQty"],
-                avgPrice=round(s["avgPrice"], 2),
+                avgPrice=display_avg,
                 ltp=ltp,
                 currentValue=current_value,
                 investedValue=invested,
@@ -193,6 +228,7 @@ def compute_portfolio_summary(positions: list[PositionOut], segment: str | None)
     pnl = round(sum(p.pnl for p in relevant), 2)
     pnl_pct = round((pnl / invested) * 100, 2) if invested else 0.0
     today_pnl = round(sum(_today_pnl_for_position(p) for p in relevant), 2)
+    active_count = len([p for p in relevant if p.netQty != 0])
     return PortfolioSummary(
         segment=segment or "combined",
         investedValue=invested,
@@ -200,5 +236,60 @@ def compute_portfolio_summary(positions: list[PositionOut], segment: str | None)
         pnl=pnl,
         pnlPercent=pnl_pct,
         todayPnl=today_pnl,
-        holdingsCount=len(relevant),
+        holdingsCount=active_count,
     )
+
+
+def compute_realized_pnl(trades: list[dict[str, Any]]) -> float:
+    """Computes total realized P&L across all closed positions from filled trades."""
+    filled = [t for t in trades if str(t.get("status", "")).lower() == "filled"]
+    filled.sort(key=lambda t: t.get("executedAt") or datetime.min.replace(tzinfo=timezone.utc))
+    state: dict[str, dict[str, Any]] = defaultdict(lambda: {"netQty": 0, "avgPrice": 0.0})
+    realized_pnl = 0.0
+
+    for t in filled:
+        sym = str(t.get("symbol", "")).upper()
+        s = state[sym]
+        qty = int(t.get("qty", 0))
+        price = float(t.get("price", 0.0))
+        side = str(t.get("side", "buy")).lower()
+
+        if s["netQty"] == 0:
+            s["avgPrice"] = price
+            s["netQty"] = qty if side == "buy" else -qty
+        elif s["netQty"] > 0:
+            if side == "buy":
+                new_qty = s["netQty"] + qty
+                s["avgPrice"] = ((s["avgPrice"] * s["netQty"]) + (price * qty)) / new_qty if new_qty else price
+                s["netQty"] = new_qty
+            else:  # selling to close/reduce long
+                closed = min(qty, s["netQty"])
+                realized_pnl += (price - s["avgPrice"]) * closed
+                s["netQty"] -= closed
+                rem = qty - closed
+                if rem > 0:
+                    s["netQty"] = -rem
+                    s["avgPrice"] = price
+                elif s["netQty"] == 0:
+                    s["avgPrice"] = 0.0
+        else:  # s["netQty"] < 0 (Short)
+            curr_abs = abs(s["netQty"])
+            if side == "sell":
+                new_abs = curr_abs + qty
+                s["avgPrice"] = ((s["avgPrice"] * curr_abs) + (price * qty)) / new_abs if new_abs else price
+                s["netQty"] = -new_abs
+            else:  # buying to cover short
+                closed = min(qty, curr_abs)
+                realized_pnl += (s["avgPrice"] - price) * closed
+                new_abs = curr_abs - closed
+                rem = qty - closed
+                if rem > 0:
+                    s["netQty"] = rem
+                    s["avgPrice"] = price
+                elif new_abs == 0:
+                    s["netQty"] = 0
+                    s["avgPrice"] = 0.0
+                else:
+                    s["netQty"] = -new_abs
+
+    return round(realized_pnl, 2)

@@ -348,3 +348,33 @@ async def portfolio_summary(
     trades = await db.paper_trades.find(query).to_list(length=None)
     positions = trading_service.compute_positions(trades, access_token=token)
     return trading_service.compute_portfolio_summary(positions, segment.value if segment else None)
+
+
+@router.post("/trades/paper/reset")
+async def reset_paper_account(
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Resets paper trading portfolio: cancels open orders, purges paper trades, and resets capital."""
+    db = get_db()
+    user_ids = [current_user["_id"], str(current_user["_id"])]
+    if ObjectId.is_valid(str(current_user["_id"])):
+        user_ids.append(ObjectId(str(current_user["_id"])))
+
+    del_trades = await db.paper_trades.delete_many({"userId": {"$in": user_ids}})
+    del_orders = await db.paper_orders.delete_many({"userId": {"$in": user_ids}})
+    await db.order_chains.delete_many({"userId": {"$in": user_ids}, "broker": "paper"})
+
+    try:
+        from app.services.cache import get_cache_client
+        cache = get_cache_client()
+        if cache:
+            cache.delete_pattern("autotrade:paper:*")
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "message": "Paper trading account successfully reset to ₹1,00,000 capital.",
+        "deletedTrades": del_trades.deleted_count,
+        "deletedOrders": del_orders.deleted_count,
+    }

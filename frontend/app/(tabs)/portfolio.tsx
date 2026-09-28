@@ -299,6 +299,8 @@ function HoldingRow({
       })
     : null;
 
+  const isClosed = position.netQty === 0;
+
   return (
     <Card
       padded={false}
@@ -308,8 +310,8 @@ function HoldingRow({
         paddingHorizontal: spacing.lg,
         paddingVertical: spacing.md,
         borderLeftWidth: 3,
-        borderLeftColor: isUp ? colors.positive : colors.negative,
-        opacity: isClosing ? 0.5 : 1,
+        borderLeftColor: isClosed ? (isUp ? colors.positive : colors.negative) : isUp ? colors.positive : colors.negative,
+        opacity: isClosing ? 0.5 : isClosed ? 0.8 : 1,
       }}
     >
       <View style={{ flex: 2, gap: 2 }}>
@@ -317,22 +319,24 @@ function HoldingRow({
           <Text variant="subtitle">{position.symbol}</Text>
           <Badge label={position.segment === "intraday" ? "MIS" : "CNC"} tone="neutral" />
           <Badge
-            label={position.netQty > 0 ? "BUY" : "SELL / SHORT"}
-            tone={position.netQty > 0 ? "positive" : "negative"}
+            label={isClosed ? "CLOSED (SL HIT)" : position.netQty > 0 ? "BUY" : "SELL / SHORT"}
+            tone={isClosed ? "warning" : position.netQty > 0 ? "positive" : "negative"}
           />
-          {linkedSl ? (
+          {linkedSl && !isClosed ? (
             <Badge label={`SL ₹${linkedSl}`} tone="warning" />
           ) : null}
         </View>
         {boughtDate ? (
           <Text variant="caption" tone="muted">
-            {position.netQty > 0 ? "Bought" : "Shorted"} {boughtDate} · {boughtTime}
+            {isClosed ? "Exited" : position.netQty > 0 ? "Bought" : "Shorted"} {boughtDate} · {boughtTime}
           </Text>
         ) : null}
       </View>
 
       <View style={{ flex: 0.6, alignItems: "flex-end" }}>
-        <Text variant="mono">{Math.abs(position.netQty)}</Text>
+        <Text variant="mono" tone={isClosed ? "muted" : undefined}>
+          {isClosed ? "0" : Math.abs(position.netQty)}
+        </Text>
       </View>
 
       <View style={{ flex: 1, alignItems: "flex-end" }}>
@@ -363,6 +367,10 @@ function HoldingRow({
         {readOnly ? (
           <Text variant="caption" tone="muted" style={{ fontSize: 11 }}>
             Locked
+          </Text>
+        ) : isClosed ? (
+          <Text variant="caption" tone="muted" style={{ fontSize: 11, fontWeight: "600" }}>
+            CLOSED
           </Text>
         ) : (
           <ClosePositionButton onPress={onClose} disabled={isClosing} />
