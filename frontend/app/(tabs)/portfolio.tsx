@@ -188,7 +188,7 @@ const HOLDING_COLUMNS: { key: SortKey; label: string; flex: number; align: "flex
 const HOLDING_EXTRACTORS: Record<SortKey, (p: Position) => string | number> = {
   time: (p) => p.firstBoughtAt || "",
   symbol: (p) => p.symbol,
-  qty: (p) => p.netQty,
+  qty: (p) => Math.abs(p.netQty),
   avg: (p) => p.avgPrice,
   ltp: (p) => p.ltp,
   dayChange: (p) => p.dayChangePercent,
@@ -277,11 +277,12 @@ function HoldingRow({
 }) {
   const isUp = position.pnl >= 0;
   const isDayUp = position.dayChangePercent >= 0;
-  const changePct = position.avgPrice > 0 ? ((position.ltp - position.avgPrice) / position.avgPrice) * 100 : 0;
-  const boughtIso = position.firstBoughtAt
-    ? position.firstBoughtAt.endsWith("Z") || position.firstBoughtAt.includes("+")
-      ? position.firstBoughtAt
-      : position.firstBoughtAt + "Z"
+  const isClosed = position.netQty === 0;
+  const txIso = (isClosed && position.lastTransactionAt) ? position.lastTransactionAt : position.firstBoughtAt;
+  const boughtIso = txIso
+    ? txIso.endsWith("Z") || txIso.includes("+")
+      ? txIso
+      : txIso + "Z"
     : null;
   const boughtDate = boughtIso
     ? new Date(boughtIso).toLocaleDateString("en-IN", {
@@ -298,8 +299,6 @@ function HoldingRow({
         timeZone: "Asia/Kolkata",
       })
     : null;
-
-  const isClosed = position.netQty === 0;
 
   return (
     <Card
@@ -359,7 +358,7 @@ function HoldingRow({
           {formatCurrency(Math.abs(position.pnl))}
         </Text>
         <Text variant="caption" tone={isUp ? "positive" : "negative"}>
-          {formatPercent(changePct)}
+          {formatPercent(position.pnlPercent)}
         </Text>
       </View>
 
