@@ -65,6 +65,10 @@ class PositionOut(BaseModel):
     lastUpdated: datetime
     firstBoughtAt: datetime | None = None
     lastTransactionAt: datetime | None = None
+    side: str | None = None
+    stopLoss: float | None = None
+    bufferedStopLoss: float | None = None
+    strategyStopLoss: float | None = None
 
 
 class PortfolioSummary(BaseModel):

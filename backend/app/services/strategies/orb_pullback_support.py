@@ -38,6 +38,33 @@ _GAP_BIAS_CLOSE_POSITION = 0.6
 _MIN_PULLBACK_CANDLES = 1
 
 
+def _apply_sl_buffer(
+    action: str,
+    tight_stop: float,
+    entry_price: float | None = None,
+    sl_buffer_pct: float = 25.0,
+) -> float:
+    """Apply the user's configured SL buffer percentage to the tight stop-loss.
+
+    Formula adheres strictly to User Settings (settings.tsx & order_execution.py):
+      Risk = abs(Entry - Tight SL)
+      Buffer Amount = Risk * (sl_buffer_pct / 100.0)
+      BUY:  Tight SL - Buffer Amount (widens stop below support low)
+      SELL: Tight SL + Buffer Amount (widens stop above support high)
+
+    Only called for Stage 4+ (support_formed, triggered) after a support candle is confirmed.
+    """
+    if entry_price is not None and entry_price > 0:
+        raw_risk = abs(entry_price - tight_stop)
+        buffer_amt = raw_risk * (sl_buffer_pct / 100.0)
+    else:
+        buffer_amt = tight_stop * (sl_buffer_pct / 10000.0)
+
+    if action == "buy":
+        return round(tight_stop - buffer_amt, 2)
+    return round(tight_stop + buffer_amt, 2)
+
+
 def _gap_bias(candles_5m: list[dict]) -> str | None:
     """Same gap-bias override rule as orb_vwap/orb_pullback."""
     if len(candles_5m) < _GAP_BIAS_MIN_CANDLES:
@@ -222,6 +249,7 @@ def compute_setup(
     entry_mode: str = "close",
     setup_trend: str = "flat",
     gap_bias: str | None = None,
+    sl_buffer_pct: float = 25.0,
 ) -> tuple[TradeSetup, dict | None]:
     if gap_bias is None:
         gap_bias = _gap_bias(candles_5m)
@@ -285,11 +313,20 @@ def compute_setup(
                 triggered_at, trigger_price = None, None
                 entry = orb_level
                 status = "pending_entry"
-                stop_loss = tight_stop if tight_stop is not None else sl_wide
+                # Before support candle is confirmed, always show the macro ORB boundary
+                # as the stop-loss (MSL). The tight SL buffer is only valid once a
+                # support candle has been identified (Stage 4+).
+                stop_loss = sl_wide
                 rationale = stage_desc
             elif stage == 4:
                 entry = orb_level
-                stop_loss = tight_stop if tight_stop is not None else sl_wide
+                ref_entry = support_trigger_level or entry
+                # Support candle confirmed → apply configured SL buffer % to the tight stop
+                stop_loss = (
+                    _apply_sl_buffer(action, tight_stop, ref_entry, sl_buffer_pct)
+                    if tight_stop is not None
+                    else sl_wide
+                )
                 assert support_trigger_level is not None
                 if entry_mode == "touch":
                     ltp_crossed = (
@@ -325,7 +362,13 @@ def compute_setup(
                 triggered_at = hist_triggered_at
                 trigger_price = support_trigger_level
                 entry = orb_level
-                stop_loss = tight_stop if tight_stop is not None else sl_wide
+                ref_entry = support_trigger_level or entry
+                # Historical trigger: buffer consistent with stage 4 SL
+                stop_loss = (
+                    _apply_sl_buffer(action, tight_stop, ref_entry, sl_buffer_pct)
+                    if tight_stop is not None
+                    else sl_wide
+                )
                 status = "triggered"
                 mode_desc = "closed above" if entry_mode == "close" else "broke above"
                 ref_desc = "green supporting candle high" if action == "buy" else "red supporting candle low"
@@ -368,6 +411,7 @@ def compute_setup(
         gapClass="up" if gap_bias == "buy" else "down" if gap_bias == "sell" else None,
         confirmation="pullback_support" if status == "triggered" else None,
         slWide=round(sl_wide, 2) if sl_wide is not None else None,
+        tightStop=round(tight_stop, 2) if ('tight_stop' in locals() and tight_stop is not None) else None,
         triggerPrice=round(trigger_price, 2) if trigger_price is not None else None,
         entryMode=entry_mode,  # type: ignore[arg-type]
         stage=stage,
@@ -383,6 +427,7 @@ def compute_setup(
             "action": action,
             "entry": entry,
             "stop_loss": stop_loss,
+            "tight_stop": tight_stop if ('tight_stop' in locals() and tight_stop is not None) else None,
             "trigger_price": trigger_price,
             "sl_wide": sl_wide,
             "entry_mode": entry_mode,

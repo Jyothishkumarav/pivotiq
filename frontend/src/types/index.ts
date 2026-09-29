@@ -300,6 +300,10 @@ export interface Position {
   lastUpdated: string;
   firstBoughtAt: string | null;
   lastTransactionAt: string | null;
+  side?: "buy" | "sell" | null;
+  stopLoss?: number | null;
+  bufferedStopLoss?: number | null;
+  strategyStopLoss?: number | null;
 }
 
 export interface PortfolioSummary {

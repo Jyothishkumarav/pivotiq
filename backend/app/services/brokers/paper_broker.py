@@ -11,7 +11,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.schemas.trade import PositionOut, Segment
-from app.services import market_data, trading_service
+from app.services import fyers_client, market_data, trading_service
 from app.services.brokers.base import (
     BaseBroker,
     BrokerFunds,
@@ -128,6 +128,31 @@ class PaperBroker(BaseBroker):
             max_positions = int(cfg.get("maxOpenPositions", 10))
             session_date = now.date().isoformat()
             positions = await self.get_positions(target_date=session_date)
+            # Enforce single entry per symbol per session date
+            s_start = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+            s_end = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
+            existing_entry = await self.db.paper_orders.find_one({
+                "userId": {"$in": self._user_ids()},
+                "symbol": req.symbol.upper(),
+                "purpose": OrderPurpose.ENTRY.value,
+                "placedAt": {"$gte": s_start, "$lte": s_end},
+                "status": {"$in": [OrderStatus.OPEN.value, OrderStatus.FILLED.value]},
+            })
+            if existing_entry:
+                return BrokerOrderResponse(
+                    order_id=order_id,
+                    broker=self.broker_name,
+                    symbol=req.symbol.upper(),
+                    qty=req.qty,
+                    filled_qty=0,
+                    price=exec_price,
+                    status=OrderStatus.REJECTED,
+                    purpose=req.purpose,
+                    message=f"Duplicate entry rejected: Position already exists for {req.symbol.upper()} on {session_date}.",
+                    placed_at=now,
+                    executed_at=None,
+                )
+
             open_syms = {p.symbol for p in positions if p.netQty != 0}
             if req.symbol.upper() not in open_syms and len(open_syms) >= max_positions:
                 return BrokerOrderResponse(
@@ -267,8 +292,7 @@ class PaperBroker(BaseBroker):
 
     async def get_orders(self, target_date: str | None = None) -> list[BrokerOrderResponse]:
         """Fetch paper orders for the user, checking if open SL orders should trigger."""
-        if not target_date:
-            await self._check_sl_triggers()
+        await self._check_sl_triggers(target_date)
         session_date = target_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         query: dict[str, Any] = {"userId": {"$in": self._user_ids()}}
         start_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
@@ -300,43 +324,28 @@ class PaperBroker(BaseBroker):
             )
         return orders
 
-    async def _check_sl_triggers(self) -> None:
-        """Evaluate open SL orders against current market quotes.
+    async def _check_sl_triggers(self, target_date: str | None = None) -> None:
+        """Evaluate open SL orders against triggers, live quotes, or historical session candles.
         
-        Strictly scopes to today's trading session:
-        1. Auto-cancels any past-day open intraday SL orders (intraday orders expire at session close).
-        2. Uses atomic find_one_and_update to prevent concurrency race conditions across workers/polls.
-        3. Prevents duplicate trade insertions in paper_trades.
+        Strictly scopes to the target session date:
+        1. Checks intraday_triggers if slHitAt was recorded.
+        2. In live session (today), checks real-time quotes.
+        3. In completed or historical sessions, checks 5m candles.
+        4. If session has completed and SL was never hit, auto-squares off at session close.
         """
         now = datetime.now(timezone.utc)
         today_str = now.strftime("%Y-%m-%d")
-        start_of_today = datetime.fromisoformat(today_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+        sess_date = target_date or today_str
 
-        # 1. Cancel past-day open intraday SL orders (MIS expires at end of session)
-        try:
-            await self.db.paper_orders.update_many(
-                {
-                    "userId": {"$in": self._user_ids()},
-                    "status": OrderStatus.OPEN.value,
-                    "placedAt": {"$lt": start_of_today},
-                },
-                {
-                    "$set": {
-                        "status": OrderStatus.CANCELLED.value,
-                        "message": "Intraday MIS order expired at end of session.",
-                    }
-                },
-            )
-        except Exception as exc:
-            logger.debug("Failed cleaning expired SL orders: %s", exc)
+        start_dt = datetime.fromisoformat(sess_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+        end_dt = datetime.fromisoformat(sess_date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
 
-        # 2. Only query open SL orders placed TODAY
         open_sls = await self.db.paper_orders.find(
             {
                 "userId": {"$in": self._user_ids()},
                 "status": OrderStatus.OPEN.value,
                 "orderType": {"$in": [OrderType.SL_M.value, OrderType.SL_L.value]},
-                "placedAt": {"$gte": start_of_today},
+                "placedAt": {"$gte": start_dt, "$lte": end_dt},
             }
         ).to_list(length=None)
 
@@ -344,23 +353,66 @@ class PaperBroker(BaseBroker):
             return
 
         token = await self._get_access_token()
+        is_today = (sess_date == today_str)
+
         for sl in open_sls:
-            sym = sl["symbol"]
+            sym = sl["symbol"].upper()
             stop_price = sl.get("stopPrice")
             if not stop_price:
                 continue
-            quote = market_data.get_quote(sym, access_token=token)
-            if not quote or quote.ltp <= 0:
-                continue
+            side = str(sl["side"]).lower()
+            placed_at = sl.get("placedAt") or start_dt
+            if placed_at.tzinfo is None:
+                placed_at = placed_at.replace(tzinfo=timezone.utc)
 
-            # For a SELL stop loss order: triggered when LTP <= stop_price
-            # For a BUY stop loss order: triggered when LTP >= stop_price
-            side = sl["side"]
-            triggered = (side == "sell" and quote.ltp <= stop_price) or (side == "buy" and quote.ltp >= stop_price)
+            triggered = False
+            fill_price = stop_price
+            exec_time = now
+            purpose = OrderPurpose.STOP_LOSS.value
+
+            # 1. Check if intraday_triggers recorded an SL hit
+            trig = await self.db.intraday_triggers.find_one({
+                "symbol": sym,
+                "date": sess_date,
+                "slHitAt": {"$ne": None},
+            })
+            if trig and trig.get("slHitAt"):
+                triggered = True
+                fill_price = stop_price
+                hit_dt = trig["slHitAt"]
+                exec_time = hit_dt.astimezone(timezone.utc) if hit_dt.tzinfo else hit_dt.replace(tzinfo=timezone.utc)
+
+            # 2. If live today, check current LTP quote
+            if not triggered and is_today:
+                quote = market_data.get_quote(sym, access_token=token)
+                if quote and quote.ltp > 0:
+                    if (side == "sell" and quote.ltp <= stop_price) or (side == "buy" and quote.ltp >= stop_price):
+                        triggered = True
+                        fill_price = stop_price
+                        exec_time = now
+
+            # 3. If past day or not triggered, check 5m session candles
+            if not triggered:
+                try:
+                    resp = fyers_client.get_history(token, sym, resolution="5", date_from=sess_date, date_to=sess_date)
+                    candles = resp.get("candles") or []
+                    placed_ts = placed_at.timestamp()
+                    for c in candles:
+                        c_ts = c[0]
+                        if c_ts < placed_ts:
+                            continue
+                        c_low = c[3]
+                        c_high = c[2]
+                        if (side == "sell" and c_low <= stop_price) or (side == "buy" and c_high >= stop_price):
+                            triggered = True
+                            fill_price = stop_price
+                            exec_time = datetime.fromtimestamp(c_ts, tz=timezone.utc)
+                            break
+
+                except Exception as c_exc:
+                    logger.debug("Candle check error for %s on %s: %s", sym, sess_date, c_exc)
 
             if triggered:
-                fill_price = stop_price
-                # 3. Atomic Compare-And-Swap (CAS) ensures only ONE concurrent call claims and fills this order
                 updated = await self.db.paper_orders.find_one_and_update(
                     {"_id": sl["_id"], "status": OrderStatus.OPEN.value},
                     {
@@ -368,47 +420,75 @@ class PaperBroker(BaseBroker):
                             "status": OrderStatus.FILLED.value,
                             "filledQty": sl["qty"],
                             "price": fill_price,
-                            "executedAt": now,
+                            "executedAt": exec_time,
                         }
                     },
                 )
                 if not updated:
-                    # Already claimed or updated by a concurrent coroutine
                     continue
 
-                # 4. Check if trade already exists to ensure idempotency
                 existing_trade = await self.db.paper_trades.find_one({"orderId": str(sl["_id"])})
-                if existing_trade:
-                    continue
-
-                await self.db.paper_trades.insert_one(
-                    {
-                        "userId": self.user_id,
-                        "symbol": sym,
-                        "segment": Segment.intraday.value,
-                        "side": side,
-                        "qty": sl["qty"],
-                        "price": fill_price,
-                        "orderType": sl["orderType"],
-                        "status": "filled",
-                        "executedAt": now,
-                        "orderId": str(sl["_id"]),
-                        "purpose": OrderPurpose.STOP_LOSS.value,
-                    }
-                )
+                if not existing_trade:
+                    await self.db.paper_trades.insert_one(
+                        {
+                            "userId": self.user_id,
+                            "symbol": sym,
+                            "segment": Segment.intraday.value,
+                            "side": side,
+                            "qty": sl["qty"],
+                            "price": fill_price,
+                            "orderType": sl["orderType"],
+                            "status": "filled",
+                            "executedAt": exec_time,
+                            "orderId": str(sl["_id"]),
+                            "purpose": purpose,
+                        }
+                    )
 
     async def get_positions(self, target_date: str | None = None) -> list[PositionOut]:
         """Derive positions from trade ledger. Intraday positions are strictly scoped to the session date."""
-        if not target_date:
-            await self._check_sl_triggers()
+        await self._check_sl_triggers(target_date)
         session_date = target_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         query: dict[str, Any] = {"userId": {"$in": self._user_ids()}, "segment": Segment.intraday.value}
         start_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
         end_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
         query["executedAt"] = {"$gte": start_dt, "$lte": end_dt}
         trades = await self.db.paper_trades.find(query).to_list(length=None)
+
+        # Build sl_map from paper_orders for this session date
+        orders_cursor = self.db.paper_orders.find({
+            "userId": {"$in": self._user_ids()},
+            "placedAt": {"$gte": start_dt, "$lte": end_dt},
+        })
+        orders = await orders_cursor.to_list(length=None)
+        sl_map: dict[str, float] = {}
+        for o in orders:
+            sym = o.get("symbol", "").upper()
+            if o.get("stopPrice"):
+                sl_map[sym] = float(o["stopPrice"])
+            elif o.get("purpose") == "stop_loss" and o.get("price"):
+                sl_map[sym] = float(o["price"])
+
+        # Also fallback to intraday_triggers for base strategy SL and fallback SL
+        strat_sl_map: dict[str, float] = {}
+        trig_cursor = self.db.intraday_triggers.find({"date": session_date})
+        triggers = await trig_cursor.to_list(length=None)
+        for tr in triggers:
+            sym = tr.get("symbol", "").upper()
+            base_sl = tr.get("tightStop") or tr.get("stopLoss")
+            if base_sl:
+                strat_sl_map[sym] = float(base_sl)
+            if sym not in sl_map and base_sl:
+                sl_map[sym] = float(base_sl)
+
         token = await self._get_access_token()
-        return trading_service.compute_positions(trades, access_token=token)
+        return trading_service.compute_positions(
+            trades,
+            access_token=token,
+            target_date=session_date,
+            sl_map=sl_map,
+            strat_sl_map=strat_sl_map,
+        )
 
     _order_lock: asyncio.Lock | None = None
 

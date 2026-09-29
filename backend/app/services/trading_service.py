@@ -25,6 +25,9 @@ async def get_user_trading_config(user_id: ObjectId | str, db: AsyncIOMotorDatab
         "maxRiskPerTrade": 1100.0,
         "maxOpenPositions": 10,
         "activeWatchlistId": None,
+        "entryMode": "close",
+        "swingSlEnabled": False,
+        "swingSlBufferPct": 1.0,
     }
     if db is None:
         return default_config
@@ -80,7 +83,13 @@ async def fill_pending_limits(db: AsyncIOMotorDatabase, user_id: ObjectId) -> in
     return len(open_orders)
 
 
-def compute_positions(trades: list[dict], access_token: str | None = None) -> list[PositionOut]:
+def compute_positions(
+    trades: list[dict],
+    access_token: str | None = None,
+    target_date: str | None = None,
+    sl_map: dict[str, float] | None = None,
+    strat_sl_map: dict[str, float] | None = None,
+) -> list[PositionOut]:
     filled = [t for t in trades if str(t.get("status", "")).lower() == OrderStatus.filled.value]
     filled.sort(key=lambda t: t.get("executedAt") or datetime.min.replace(tzinfo=timezone.utc))
 
@@ -94,6 +103,10 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
             "realizedPnl": 0.0,
             "firstBoughtAt": None,
             "lastTransactionAt": None,
+            "entrySide": None,
+            "stopLoss": None,
+            "bufferedStopLoss": None,
+            "strategyStopLoss": None,
         }
     )
     for t in filled:
@@ -106,9 +119,19 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
         qty = int(t.get("qty", 0))
         price = float(t.get("price", 0.0))
         side = str(t.get("side", "buy")).lower()
+        purpose = str(t.get("purpose", "")).lower()
+
+        if purpose == "stop_loss":
+            s["stopLoss"] = price
+            s["bufferedStopLoss"] = price
+        elif t.get("stopPrice"):
+            s["stopLoss"] = float(t["stopPrice"])
+            s["bufferedStopLoss"] = float(t["stopPrice"])
 
         if s["netQty"] == 0:
-            s["firstBoughtAt"] = exec_at
+            if s["totalEntryQty"] == 0 or not s.get("entrySide"):
+                s["firstBoughtAt"] = exec_at
+                s["entrySide"] = side
             s["avgPrice"] = price
             s["entryAvgPrice"] = price
             s["totalEntryQty"] += qty
@@ -132,6 +155,7 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
                     s["entryAvgPrice"] = price
                     s["totalEntryQty"] += rem
                     s["firstBoughtAt"] = exec_at
+                    s["entrySide"] = "sell"
         else:  # s["netQty"] < 0 (Short position)
             curr_abs = abs(s["netQty"])
             if side == "sell":
@@ -152,12 +176,16 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
                     s["entryAvgPrice"] = price
                     s["totalEntryQty"] += rem
                     s["firstBoughtAt"] = exec_at
+                    s["entrySide"] = "buy"
                 elif new_abs == 0:
                     s["netQty"] = 0
                 else:
                     s["netQty"] = -new_abs
 
     from app.services.market_data import is_index_symbol
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    is_past_session = bool(target_date and target_date < today_str)
 
     positions: list[PositionOut] = []
     for (symbol, segment), s in state.items():
@@ -166,13 +194,25 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
         if s["totalEntryQty"] == 0 and s["netQty"] == 0:
             continue
 
-        quote = market_data.get_quote(symbol, access_token=access_token)
-        change_pct = float(quote.changePercent) if quote is not None else 0.0
-        last_updated = quote.lastUpdated if quote is not None else (s["lastTransactionAt"] or datetime.now(timezone.utc))
+        if sl_map and symbol in sl_map:
+            if not s.get("stopLoss"):
+                s["stopLoss"] = sl_map[symbol]
+            if not s.get("bufferedStopLoss"):
+                s["bufferedStopLoss"] = sl_map[symbol]
+        if strat_sl_map and symbol in strat_sl_map:
+            s["strategyStopLoss"] = strat_sl_map[symbol]
 
         if s["netQty"] != 0:
             # Active open position
-            ltp = float(quote.ltp) if quote is not None else float(s["avgPrice"])
+            quote = market_data.get_quote(symbol, access_token=access_token)
+            change_pct = float(quote.changePercent) if quote is not None else 0.0
+            last_updated = quote.lastUpdated if quote is not None else (s["lastTransactionAt"] or datetime.now(timezone.utc))
+
+            # Past intraday sessions must never evaluate against today's real-time live quotes
+            if is_past_session:
+                ltp = float(s["lastExitPrice"]) if s["lastExitPrice"] > 0 else float(s["avgPrice"])
+            else:
+                ltp = float(quote.ltp) if quote is not None else float(s["avgPrice"])
             abs_qty = abs(s["netQty"])
             invested = round(s["avgPrice"] * abs_qty, 2)
             current_value = round(ltp * abs_qty, 2)
@@ -184,8 +224,10 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
             pnl_pct = round((pnl / invested) * 100, 2) if invested else 0.0
             display_avg = round(s["avgPrice"], 2)
         else:
-            # Closed position (SL Hit or squared off)
-            exit_price = s["lastExitPrice"] if s["lastExitPrice"] > 0 else (float(quote.ltp) if quote else s["entryAvgPrice"])
+            # Closed position (SL Hit or squared off) — instantaneous without network delay
+            change_pct = 0.0
+            last_updated = s["lastTransactionAt"] or datetime.now(timezone.utc)
+            exit_price = s["lastExitPrice"] if s["lastExitPrice"] > 0 else (s.get("stopLoss") or s["entryAvgPrice"])
             ltp = round(exit_price, 2)
             invested = 0.0
             current_value = 0.0
@@ -209,6 +251,10 @@ def compute_positions(trades: list[dict], access_token: str | None = None) -> li
                 lastUpdated=last_updated,
                 firstBoughtAt=s["firstBoughtAt"],
                 lastTransactionAt=s["lastTransactionAt"],
+                side=s.get("entrySide"),
+                stopLoss=s.get("stopLoss"),
+                bufferedStopLoss=s.get("bufferedStopLoss") or s.get("stopLoss"),
+                strategyStopLoss=s.get("strategyStopLoss"),
             )
         )
     return positions

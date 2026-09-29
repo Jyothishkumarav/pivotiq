@@ -95,6 +95,7 @@ class TradeSetup(BaseModel):
     gapClass: str | None = None
     confirmation: str | None = None
     slWide: float | None = None
+    tightStop: float | None = None
     triggerPrice: float | None = None
     entryMode: Literal["touch", "close"] | None = None
     includeFirstCandle: bool | None = None

@@ -277,31 +277,12 @@ async def list_positions(
             positions = [p for p in positions if p.segment == segment]
         return positions
 
-    await trading_service.fill_pending_limits(db, current_user["_id"])
-    session_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    query: dict = {"userId": current_user["_id"]}
+    from app.services.brokers.paper_broker import PaperBroker
+    paper_broker = PaperBroker(user_id=current_user["_id"], db=db)
+    positions = await paper_broker.get_positions(target_date=date)
     if segment is not None:
-        query["segment"] = segment.value
-    # Intraday MIS positions are strictly scoped to the session date (never bleed across days)
-    if segment == Segment.intraday or segment is None:
-        start_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
-        end_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
-        query["executedAt"] = {"$gte": start_dt, "$lte": end_dt}
-    elif date:
-        start_dt = datetime.fromisoformat(date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
-        end_dt = datetime.fromisoformat(date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
-        query["executedAt"] = {"$gte": start_dt, "$lte": end_dt}
-    trades = await db.paper_trades.find(query).to_list(length=None)
-
-    token = None
-    try:
-        creds = await db.fyers_credentials.find_one({"userId": current_user["_id"]})
-        if creds:
-            token = creds.get("accessToken")
-    except Exception:
-        pass
-
-    return trading_service.compute_positions(trades, access_token=token)
+        positions = [p for p in positions if p.segment == segment]
+    return positions
 
 
 @router.get("/portfolio/summary", response_model=PortfolioSummary)
@@ -323,30 +304,9 @@ async def portfolio_summary(
         positions = await broker_client.get_positions()
         return trading_service.compute_portfolio_summary(positions, segment.value if segment else None)
 
-    token = None
-    try:
-        creds = await db.fyers_credentials.find_one({"userId": current_user["_id"]})
-        if creds:
-            token = creds.get("accessToken")
-    except Exception:
-        pass
-
-    await trading_service.fill_pending_limits(db, current_user["_id"])
-    session_date = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    query: dict = {"userId": current_user["_id"]}
-    if segment is not None:
-        query["segment"] = segment.value
-    # Intraday MIS positions are strictly scoped to the session date (never bleed across days)
-    if segment == Segment.intraday or segment is None:
-        start_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
-        end_dt = datetime.fromisoformat(session_date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
-        query["executedAt"] = {"$gte": start_dt, "$lte": end_dt}
-    elif date:
-        start_dt = datetime.fromisoformat(date).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
-        end_dt = datetime.fromisoformat(date).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59, microsecond=999999)
-        query["executedAt"] = {"$gte": start_dt, "$lte": end_dt}
-    trades = await db.paper_trades.find(query).to_list(length=None)
-    positions = trading_service.compute_positions(trades, access_token=token)
+    from app.services.brokers.paper_broker import PaperBroker
+    paper_broker = PaperBroker(user_id=current_user["_id"], db=db)
+    positions = await paper_broker.get_positions(target_date=date)
     return trading_service.compute_portfolio_summary(positions, segment.value if segment else None)
 
 

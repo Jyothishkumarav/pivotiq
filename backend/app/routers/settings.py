@@ -404,7 +404,11 @@ class TradingSettingsResponse(BaseModel):
     maxRiskPerTrade: float
     maxOpenPositions: int
     activeWatchlistId: str | None
+    entryMode: str = "close"
     availableWatchlists: list[WatchlistOption]
+    # Swing SL settings
+    swingSlEnabled: bool = False
+    swingSlBufferPct: float = 1.0  # % added on top of detected swing level
 
 
 class TradingSettingsUpdate(BaseModel):
@@ -413,6 +417,10 @@ class TradingSettingsUpdate(BaseModel):
     maxRiskPerTrade: float | None = None
     maxOpenPositions: int | None = None
     activeWatchlistId: str | None = None
+    entryMode: str | None = None
+    # Swing SL settings
+    swingSlEnabled: bool | None = None
+    swingSlBufferPct: float | None = None
 
 
 @router.get("/trading", response_model=TradingSettingsResponse)
@@ -437,7 +445,10 @@ async def get_trading_settings(current_user: dict = Depends(get_current_user)) -
         maxRiskPerTrade=float(cfg.get("maxRiskPerTrade", 1100.0)),
         maxOpenPositions=int(cfg.get("maxOpenPositions", 10)),
         activeWatchlistId=cfg.get("activeWatchlistId"),
+        entryMode=str(cfg.get("entryMode", "close")),
         availableWatchlists=wl_options,
+        swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
+        swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
     )
 
 
@@ -462,6 +473,12 @@ async def update_trading_settings(
     if payload.activeWatchlistId is not None:
         cfg["activeWatchlistId"] = payload.activeWatchlistId if payload.activeWatchlistId not in ("all", "") else None
         watchlist_processor.switch_active_watchlist(user_id, cfg["activeWatchlistId"])
+    if payload.entryMode is not None:
+        cfg["entryMode"] = "touch" if payload.entryMode == "touch" else "close"
+    if payload.swingSlEnabled is not None:
+        cfg["swingSlEnabled"] = bool(payload.swingSlEnabled)
+    if payload.swingSlBufferPct is not None:
+        cfg["swingSlBufferPct"] = max(0.0, min(20.0, float(payload.swingSlBufferPct)))
 
     now = datetime.now(timezone.utc)
     await db.user_settings.update_one(
@@ -485,6 +502,9 @@ async def update_trading_settings(
         maxRiskPerTrade=float(cfg.get("maxRiskPerTrade", 1100.0)),
         maxOpenPositions=int(cfg.get("maxOpenPositions", 10)),
         activeWatchlistId=cfg.get("activeWatchlistId"),
+        entryMode=str(cfg.get("entryMode", "close")),
         availableWatchlists=wl_options,
+        swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
+        swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
     )
 

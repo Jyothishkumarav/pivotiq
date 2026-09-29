@@ -661,6 +661,7 @@ def compute_snapshot(
     entry_mode: str = "close",
     retest_date: str | None = None,
     include_first_candle: bool = False,
+    sl_buffer_pct: float = 25.0,
 ) -> IntradaySnapshot | None:
     """Fetch candles and reduce them to an ORB snapshot.
 
@@ -675,7 +676,7 @@ def compute_snapshot(
     """
     symbol = symbol.upper()
     is_retest = bool(retest_date)
-    cache_key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}:{retest_date or 'live'}"
+    cache_key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}:{sl_buffer_pct:.1f}:{retest_date or 'live'}"
     cached = _cache.get(cache_key)
     if cached is not None:
         return cached
@@ -834,6 +835,7 @@ def compute_snapshot(
             is_retest=is_retest,
             setup_trend=setup_trend,
             gap_bias=gap_bias,
+            sl_buffer_pct=sl_buffer_pct,
         )
     else:
         frozen = _trigger_state.get(symbol, today, entry_mode=entry_mode, include_first_candle=False) if not is_retest else None
@@ -956,6 +958,7 @@ def _compute_pluggable_setup(
     is_retest: bool = False,
     setup_trend: str = "flat",
     gap_bias: str | None = None,
+    sl_buffer_pct: float = 25.0,
 ) -> TradeSetup:
     """Dispatches to a non-default strategy module, wiring its freeze/SL-hit
     state through the same shared `_trigger_state` cache (namespaced by
@@ -1102,6 +1105,7 @@ def _compute_pluggable_setup(
             frozen=frozen,
             setup_trend=setup_trend,
             gap_bias=gap_bias,
+            sl_buffer_pct=sl_buffer_pct,
         )
         if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
@@ -1112,6 +1116,7 @@ def _compute_pluggable_setup(
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
+                    "tightStop": freeze_payload.get("tight_stop"),
                     "triggerPrice": freeze_payload["trigger_price"],
                     "slWide": freeze_payload.get("sl_wide"),
                 },
@@ -1119,6 +1124,7 @@ def _compute_pluggable_setup(
             setup.triggeredAt = frozen["triggered_at"]
             setup.status = "triggered"
             setup.triggerPrice = frozen.get("trigger_price")
+            setup.tightStop = frozen.get("tight_stop", setup.tightStop)
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
 
@@ -1181,6 +1187,7 @@ def _compute_pluggable_setup(
             setup_trend=setup_trend,
             gap_bias=gap_bias,
             index_snapshots=idx_snaps,
+            sl_buffer_pct=sl_buffer_pct,
         )
         if not is_retest and frozen is None and freeze_payload is not None:
             frozen = _trigger_state.freeze(
@@ -1191,6 +1198,7 @@ def _compute_pluggable_setup(
                 extra={
                     "entry": freeze_payload["entry"],
                     "stopLoss": freeze_payload["stop_loss"],
+                    "tightStop": freeze_payload.get("tight_stop"),
                     "triggerPrice": freeze_payload["trigger_price"],
                     "slWide": freeze_payload.get("sl_wide"),
                     "indexConfluence": freeze_payload.get("index_confluence"),
@@ -1200,6 +1208,7 @@ def _compute_pluggable_setup(
             setup.triggeredAt = frozen["triggered_at"]
             setup.status = "triggered"
             setup.triggerPrice = frozen.get("trigger_price")
+            setup.tightStop = frozen.get("tight_stop", setup.tightStop)
             setup.indexConfluence = frozen.get("index_confluence", setup.indexConfluence)
             setup.sizingMultiplier = frozen.get("sizing_multiplier", setup.sizingMultiplier)
         elif frozen is not None:

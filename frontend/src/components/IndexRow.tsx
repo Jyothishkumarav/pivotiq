@@ -103,14 +103,14 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           }}
         >
           {/* Symbol + intraday subtext */}
-          <View style={{ flex: 1.3, paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 1.6, minWidth: 160, paddingHorizontal: 6, paddingRight: 16, gap: 2, overflow: "hidden" }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
-              <Text variant="subtitle" style={{ fontWeight: "700", letterSpacing: 0.2 }}>
+              <Text variant="subtitle" numberOfLines={1} style={{ fontWeight: "700", letterSpacing: 0.2 }}>
                 {name}
               </Text>
             </View>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
+            <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
               {intraday
                 ? `VWAP ${Math.round(intraday.vwap)} · ORB ${Math.round(intraday.openingRangeLow)}–${Math.round(intraday.openingRangeHigh)}`
                 : "NSE Benchmark Index"}
@@ -118,20 +118,20 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* LTP column */}
-          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            <Text variant="mono" style={{ fontWeight: "700" }}>
+          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6 }}>
+            <Text variant="mono" numberOfLines={1} style={{ fontWeight: "700" }}>
               {effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}
             </Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.75, minWidth: 72, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {dayChangePct !== null ? (
-              <Text variant="mono" tone={isUp ? "positive" : "negative"} style={{ fontWeight: "600" }}>
+              <Text variant="mono" tone={isUp ? "positive" : "negative"} numberOfLines={1} style={{ fontWeight: "600" }}>
                 {formatPercent(dayChangePct)}
               </Text>
             ) : (
-              <Text variant="mono" tone="muted">
+              <Text variant="mono" tone="muted" numberOfLines={1}>
                 —
               </Text>
             )}
@@ -149,7 +149,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Setup column: pill only */}
-          <View style={{ flex: 0.65, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.7, minWidth: 75, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               <SetupPill setup={intraday.tradeSetup} />
             ) : (
@@ -160,7 +160,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Entry column */}
-          <View style={{ flex: 0.9, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.9, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
               (() => {
@@ -170,7 +170,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
                 const breakoutPrice = hasTrigger && setup.triggerPrice !== setup.entry ? setup.entry : null;
                 return (
                   <>
-                    <Text variant="mono" tone="positive" style={{ fontSize: 12, lineHeight: 15, fontWeight: "600" }}>
+                    <Text variant="mono" tone="positive" numberOfLines={1} style={{ fontSize: 12, lineHeight: 15, fontWeight: "600" }}>
                       {formatCurrency(entryPrice)}
                     </Text>
                     {breakoutPrice !== null ? (
@@ -212,7 +212,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
-          <View style={{ flex: 1.4, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 1.45, minWidth: 145, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" ||
               intraday.tradeSetup.status === "sl_hit" ||
@@ -266,7 +266,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 1.0, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.95, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -384,7 +384,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Δ Entry column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.9, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             effectiveLtp !== null ? (
@@ -398,10 +398,10 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
                 const sign = signedDiff > 0 ? "+" : signedDiff < 0 ? "−" : "";
                 return (
                   <>
-                    <Text variant="mono" tone={tone}>
+                    <Text variant="mono" tone={tone} numberOfLines={1} style={{ fontSize: 12, lineHeight: 15, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {sign}{formatCurrency(Math.abs(signedDiff))}
                     </Text>
-                    <Text variant="caption" tone={tone}>
+                    <Text variant="caption" tone={tone} numberOfLines={1} style={{ fontSize: 11, lineHeight: 13, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {formatPercent(pct)}
                     </Text>
                   </>
@@ -415,7 +415,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Δ SL column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             effectiveLtp !== null ? (
@@ -433,10 +433,10 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
                 const sign = roomToSl > 0 ? "+" : roomToSl < 0 ? "−" : "";
                 return (
                   <>
-                    <Text variant="mono" tone={tone}>
+                    <Text variant="mono" tone={tone} numberOfLines={1} style={{ fontSize: 12, lineHeight: 15, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {sign}{formatCurrency(Math.abs(roomToSl))}
                     </Text>
-                    <Text variant="caption" tone={tone}>
+                    <Text variant="caption" tone={tone} numberOfLines={1} style={{ fontSize: 11, lineHeight: 13, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {formatPercent(pct)}
                     </Text>
                   </>
@@ -450,16 +450,16 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Max Run column */}
-          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono" tone="muted">
               —
             </Text>
           </View>
 
           {/* Time column */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.7, minWidth: 68, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup?.triggeredAt ? (
-              <Text variant="caption" tone="positive">
+              <Text variant="caption" tone="positive" numberOfLines={1}>
                 {formatIstTime(intraday.tradeSetup.triggeredAt)}
               </Text>
             ) : (
@@ -470,7 +470,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Live Trade column (indices are not directly traded from this equity row) */}
-          <View style={{ flex: 0.95, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6 }}>
             <Text variant="mono" tone="muted">
               —
             </Text>

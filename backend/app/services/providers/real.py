@@ -84,6 +84,11 @@ class _TTLCache:
                 self._store[key] = (now, value)
         return value
 
+    def set(self, key: str, ttl_seconds: int, value: Any) -> None:
+        if value:
+            with self._lock:
+                self._store[key] = (time.time(), value)
+
 
 def _num(value: Any) -> float | None:
     try:
@@ -195,18 +200,26 @@ class RealProvider:
             for d in results[:limit]
         ]
 
-    # ---------------- Quote ----------------
     def _fetch_fast_info(self, symbol: str) -> dict:
         try:
             ticker = self._ticker(symbol)
             info = ticker.fast_info
+
+            def _get_val(snake: str, camel: str):
+                v = None
+                if hasattr(info, "get"):
+                    v = info.get(camel) if info.get(camel) is not None else info.get(snake)
+                if v is None:
+                    v = getattr(info, camel, None) or getattr(info, snake, None)
+                return v
+
             return {
-                "ltp": _num(info.get("last_price")),
-                "open": _num(info.get("open")),
-                "high": _num(info.get("day_high")),
-                "low": _num(info.get("day_low")),
-                "prevClose": _num(info.get("previous_close")),
-                "volume": _int(info.get("last_volume")) or _int(info.get("regular_market_volume")),
+                "ltp": _num(_get_val("last_price", "lastPrice")),
+                "open": _num(_get_val("open", "open")),
+                "high": _num(_get_val("day_high", "dayHigh")),
+                "low": _num(_get_val("day_low", "dayLow")),
+                "prevClose": _num(_get_val("previous_close", "previousClose")),
+                "volume": _int(_get_val("last_volume", "lastVolume")) or _int(_get_val("regular_market_volume", "regularMarketVolume")),
             }
         except Exception as exc:
             logger.warning("yfinance fast_info failed for %s: %s", symbol, exc)
@@ -246,16 +259,78 @@ class RealProvider:
             lastUpdated=datetime.now(timezone.utc),
         )
 
+    def _get_active_fyers_token(self) -> str | None:
+        try:
+            now = datetime.now(timezone.utc)
+            cred = self._db.fyers_credentials.find_one({
+                "accessToken": {"$ne": None},
+                "expiresAt": {"$gte": now},
+            })
+            if cred and cred.get("accessToken"):
+                return cred["accessToken"]
+        except Exception:
+            pass
+        return None
+
+    def get_quotes_batch(self, symbols: list[str], access_token: str | None = None) -> dict[str, Quote]:
+        if not symbols:
+            return {}
+        tok = access_token or self._get_active_fyers_token()
+        quotes_map: dict[str, Quote] = {}
+        if tok:
+            try:
+                for i in range(0, len(symbols), 50):
+                    batch = symbols[i : i + 50]
+                    resp = fyers_client.get_quotes(tok, batch)
+                    for r in resp.get("d") or []:
+                        if r.get("s") == "ok":
+                            v = r.get("v") or {}
+                            raw_sym = r.get("n", "")
+                            clean_sym = raw_sym.replace("NSE:", "").replace("-EQ", "").replace("-INDEX", "").strip().upper()
+                            ltp = _num(v.get("lp"))
+                            prev_close = _num(v.get("prev_close_price"))
+                            if ltp is not None:
+                                change = _num(v.get("ch")) or (round(ltp - prev_close, 2) if prev_close else 0.0)
+                                change_pct = _num(v.get("chp")) or (round((change / prev_close) * 100, 2) if prev_close else 0.0)
+                                q = Quote(
+                                    symbol=clean_sym,
+                                    name=v.get("description") or v.get("short_name") or clean_sym,
+                                    exchange="NSE",
+                                    ltp=round(ltp, 2),
+                                    change=round(change, 2),
+                                    changePercent=round(change_pct, 2),
+                                    open=round(_num(v.get("open_price")) or (prev_close or ltp), 2),
+                                    high=round(_num(v.get("high_price")) or ltp, 2),
+                                    low=round(_num(v.get("low_price")) or ltp, 2),
+                                    prevClose=round(prev_close, 2) if prev_close else round(ltp, 2),
+                                    volume=int(_num(v.get("volume")) or 0),
+                                    lastUpdated=datetime.now(timezone.utc),
+                                )
+                                quotes_map[clean_sym] = q
+                                self._cache.set(f"quote-fyers:{clean_sym}", 10, q)
+            except Exception as exc:
+                logger.warning("Fyers get_quotes_batch failed: %s", exc)
+
+        for sym in symbols:
+            s_up = sym.upper()
+            if s_up not in quotes_map:
+                q = self.get_quote(s_up, access_token=tok)
+                if q:
+                    quotes_map[s_up] = q
+
+        return quotes_map
+
     def get_quote(self, symbol: str, access_token: str | None = None) -> Quote | None:
         symbol = symbol.upper()
         snapshot = self._snapshot_from_db(symbol)
         if snapshot is None:
             return None
 
-        if access_token:
+        tok = access_token or self._get_active_fyers_token()
+        if tok:
             fkey = f"quote-fyers:{symbol}"
             quote = self._cache.get_or_set(
-                fkey, 10, lambda: self._fetch_quote_from_fyers(symbol, access_token)
+                fkey, 10, lambda: self._fetch_quote_from_fyers(symbol, tok)
             )
             if quote is not None:
                 return quote

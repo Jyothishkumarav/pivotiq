@@ -539,6 +539,8 @@ def _format_pullback_started_message(
     strategy_label = STRATEGY_SHORT_NAMES.get(setup.strategy, setup.strategy.upper())
     action_label = setup.action.upper()
     action_emoji = "🟢" if setup.action == "buy" else "🔴"
+    # setup.stopLoss at stage 3 (pb_forming) is always the ORB macro boundary (MSL)
+    msl = setup.stopLoss
 
     title = f"🟡 {snapshot.symbol} · Pullback Started · {strategy_label}"
 
@@ -550,8 +552,9 @@ def _format_pullback_started_message(
         f"BO Price   ·  <code>₹{setup.entry:,.2f}</code>",
         f"ORB Range  ·  <code>₹{snapshot.openingRangeLow:,.2f} – ₹{snapshot.openingRangeHigh:,.2f}</code>",
         f"VWAP       ·  <code>₹{snapshot.vwap:,.2f}</code>",
+        f"MSL        ·  <code>₹{msl:,.2f}</code>  <i>(Macro Stop · ORB {'Low' if setup.action == 'buy' else 'High'} boundary)</i>",
         "",
-        f"ℹ️ <i>Pullback active. Watching for supporting candle formation.</i>",
+        f"ℹ️ <i>Pullback active. Tight SL buffer will be set once support candle forms.</i>",
         "",
         f"🔗 {_tradingview_link(snapshot.symbol)}",
     ]
@@ -576,8 +579,10 @@ def notify_pullback_started(
         return
 
     date_str = datetime.now(_IST).date().isoformat()
+    entry_mode = getattr(setup, "entryMode", "close") or "close"
     cache = get_cache_client()
-    cache_key = f"notif:stage:pb:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}"
+    # Include entry_mode so close/touch configs track independently
+    cache_key = f"notif:stage:pb:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}:{entry_mode}"
     if cache.exists(cache_key):
         return
 
@@ -630,7 +635,7 @@ def _format_support_formed_message(
         f"Trigger    ·  <b>₹{trigger_level:,.2f}</b>  <i>({'Green High' if setup.action == 'buy' else 'Red Low'})</i>",
         f"BO Price   ·  <code>₹{setup.entry:,.2f}</code>",
         f"LTP        ·  <code>₹{snapshot.currentPrice:,.2f}</code>",
-        f"Tight SL   ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Risk: ₹{risk_per_share:,.2f}/sh)</i>",
+        f"Tight SL   ·  <code>₹{setup.stopLoss:,.2f}</code>  <i>(Buffered · Risk: ₹{risk_per_share:,.2f}/sh)</i>",
         f"VWAP       ·  <code>₹{snapshot.vwap:,.2f}</code>",
         "",
         f"🎯 <b>Ready for entry. Order will trigger when price breaks ₹{trigger_level:,.2f}.</b>",
@@ -659,8 +664,11 @@ def notify_support_candle_formed(
 
     date_str = datetime.now(_IST).date().isoformat()
     trigger_level = setup.triggerPrice if setup.triggerPrice is not None else setup.entry
+    entry_mode = getattr(setup, "entryMode", "close") or "close"
     cache = get_cache_client()
-    cache_key = f"notif:stage:sup:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}:{trigger_level:.2f}"
+    # Include entry_mode so close/touch configs track independently; trigger_level
+    # ensures a new support candle at a different level fires a fresh notification
+    cache_key = f"notif:stage:sup:{snapshot.symbol.upper()}:{setup.strategy}:{date_str}:{setup.action}:{entry_mode}:{trigger_level:.2f}"
     if cache.exists(cache_key):
         return
 

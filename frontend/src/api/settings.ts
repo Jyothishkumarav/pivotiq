@@ -36,7 +36,10 @@ export interface TradingSettingsResponse {
   maxRiskPerTrade: number;
   maxOpenPositions: number;
   activeWatchlistId: string | null;
+  entryMode?: "close" | "touch";
   availableWatchlists: WatchlistOption[];
+  swingSlEnabled: boolean;
+  swingSlBufferPct: number;
 }
 
 export interface TradingSettingsUpdate {
@@ -45,6 +48,9 @@ export interface TradingSettingsUpdate {
   maxRiskPerTrade?: number;
   maxOpenPositions?: number;
   activeWatchlistId?: string | null;
+  entryMode?: "close" | "touch";
+  swingSlEnabled?: boolean;
+  swingSlBufferPct?: number;
 }
 
 export const settingsApi = {

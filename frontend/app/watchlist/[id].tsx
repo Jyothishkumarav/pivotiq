@@ -33,21 +33,22 @@ const COLUMN_HEADERS: {
   key: SortKey;
   label: string;
   flex: number;
+  minWidth: number;
   align: "flex-start" | "flex-end";
   sortable?: boolean;
 }[] = [
-  { key: "symbol", label: "Symbol", flex: 1.3, align: "flex-start", sortable: true },
-  { key: "ltp", label: "LTP", flex: 0.8, align: "flex-end", sortable: true },
-  { key: "dayChange", label: "Day", flex: 0.75, align: "flex-end", sortable: true },
-  { key: "symbol", label: "Setup", flex: 0.65, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Entry", flex: 0.9, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Stop Loss", flex: 1.4, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Status", flex: 1.0, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ Entry", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Δ SL", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Max Run", flex: 0.8, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Time", flex: 0.75, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Live Trade", flex: 0.95, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Symbol", flex: 1.6, minWidth: 160, align: "flex-start", sortable: true },
+  { key: "ltp", label: "LTP", flex: 0.85, minWidth: 85, align: "flex-end", sortable: true },
+  { key: "dayChange", label: "Day", flex: 0.75, minWidth: 72, align: "flex-end", sortable: true },
+  { key: "symbol", label: "Setup", flex: 0.7, minWidth: 75, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Entry", flex: 0.9, minWidth: 85, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Stop Loss", flex: 1.45, minWidth: 145, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Status", flex: 0.95, minWidth: 90, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Δ Entry", flex: 0.9, minWidth: 90, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Δ SL", flex: 0.95, minWidth: 95, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Max Run", flex: 0.85, minWidth: 85, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Time", flex: 0.7, minWidth: 68, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Live Trade", flex: 0.95, minWidth: 95, align: "flex-end", sortable: false },
 ];
 
 /** Column value extractors. `null` values are always pushed to the end regardless of direction. */
@@ -631,6 +632,7 @@ function SortableHeader({ state, onChange }: { state: SortState; onChange: (next
             disabled={!sortable}
             style={({ hovered }: any) => ({
               flex: col.flex,
+              minWidth: col.minWidth,
               alignItems: col.align,
               flexDirection: "row",
               justifyContent: col.align === "flex-end" ? "flex-end" : "flex-start",
@@ -990,7 +992,7 @@ export default function WatchlistDetailScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ minWidth: 1140, width: "100%" }}
+        contentContainerStyle={{ minWidth: 1260, width: "100%" }}
       >
         <View style={{ width: "100%", gap: spacing.xs }}>
           <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />

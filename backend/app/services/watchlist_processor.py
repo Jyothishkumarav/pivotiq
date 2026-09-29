@@ -71,8 +71,8 @@ class WatchlistProcessor:
         #   "name": str,
         # }
         self._watchlist_meta: dict[str, dict[str, Any]] = {}
-        # In-memory map: user_id -> active_watchlist_id
-        self._user_active_watchlist: dict[str, str] = {}
+        # In-memory map: user_id -> list of active_watchlist_ids
+        self._user_active_watchlists: dict[str, list[str]] = {}
         # In-memory fast snapshot store: watchlist_id -> dict of symbol -> snapshot dict
         self._memory_snapshots: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
@@ -101,7 +101,7 @@ class WatchlistProcessor:
             "taskActive": self._task is not None and not self._task.done(),
             "isMarketHours": _is_market_hours(),
             "trackedWatchlists": len(self._watchlist_meta),
-            "activeUsers": len(self._user_active_watchlist),
+            "activeUsers": len(self._user_active_watchlists),
             "cachedWatchlists": list(self._memory_snapshots.keys()),
         }
 
@@ -180,47 +180,66 @@ class WatchlistProcessor:
 
     def switch_active_watchlist(self, user_id: str | ObjectId, new_watchlist_id: str | None) -> None:
         uid = str(user_id)
-        if new_watchlist_id:
-            self._user_active_watchlist[uid] = str(new_watchlist_id)
+        if new_watchlist_id and new_watchlist_id not in ("all", ""):
+            self._user_active_watchlists[uid] = [str(new_watchlist_id)]
             logger.info("WatchlistProcessor: User %s switched active watchlist to %s", uid, new_watchlist_id)
         else:
-            self._user_active_watchlist.pop(uid, None)
+            self._user_active_watchlists.pop(uid, None)
+            logger.info("WatchlistProcessor: User %s switched active watchlist to all watchlists", uid)
 
     # -------------------------------------------------------------------------
     # Active Watchlist Sync from DB (Periodic)
     # -------------------------------------------------------------------------
     async def _sync_active_watchlists_from_db(self) -> None:
-        """Discovers all users with trading configuration and their active watchlists."""
+        """Discovers all users and their active watchlists based on trading config."""
         try:
             db = get_db()
+            user_entry_modes: dict[str, str] = {}
+            user_sl_buffers: dict[str, float] = {}
             settings_cursor = db.user_settings.find({"type": "trading_config"})
             async for doc in settings_cursor:
                 uid = str(doc.get("userId"))
                 cfg = doc.get("config", {})
                 active_wid = cfg.get("activeWatchlistId")
+                user_entry_modes[uid] = cfg.get("entryMode", "close")
+                user_sl_buffers[uid] = float(cfg.get("slBufferPct", 25.0))
                 if active_wid and active_wid not in ("all", ""):
-                    self._user_active_watchlist[uid] = str(active_wid)
+                    self._user_active_watchlists[uid] = [str(active_wid)]
                 else:
-                    # If not explicitly set, fallback to the user's first watchlist
+                    # User configured "all" watchlists or none specified
                     user_ids = [uid]
                     if ObjectId.is_valid(uid):
                         user_ids.append(ObjectId(uid))
-                    first_wl = await db.watchlists.find_one({"userId": {"$in": user_ids}})
-                    if first_wl:
-                        self._user_active_watchlist[uid] = str(first_wl["_id"])
+                    user_wls = await db.watchlists.find({"userId": {"$in": user_ids}}).to_list(100)
+                    if user_wls:
+                        self._user_active_watchlists[uid] = [str(w["_id"]) for w in user_wls]
+
+            # Discover any users with watchlists who don't have a trading_config document yet
+            all_wl_user_ids = await db.watchlists.distinct("userId")
+            for uid_raw in all_wl_user_ids:
+                uid = str(uid_raw)
+                if uid not in self._user_active_watchlists:
+                    user_wls = await db.watchlists.find({"userId": uid_raw}).to_list(100)
+                    if user_wls:
+                        self._user_active_watchlists[uid] = [str(w["_id"]) for w in user_wls]
 
             # Now load/update the metadata for all active watchlists
-            active_wids = set(self._user_active_watchlist.values())
+            active_wids = {wid for wids in self._user_active_watchlists.values() for wid in wids}
             for wid in active_wids:
                 if not ObjectId.is_valid(wid):
                     continue
                 wl_doc = await db.watchlists.find_one({"_id": ObjectId(wid)})
                 if wl_doc:
                     raw_items = wl_doc.get("items", [])
+                    u_id_str = str(wl_doc.get("userId"))
+                    entry_mode = user_entry_modes.get(u_id_str, "close")
+                    sl_buffer = user_sl_buffers.get(u_id_str, 25.0)
                     self._watchlist_meta[wid] = {
-                        "userId": str(wl_doc.get("userId")),
+                        "userId": u_id_str,
                         "symbols": [i["symbol"].upper() for i in raw_items if "symbol" in i],
                         "strategy": wl_doc.get("strategy", "orb_pullback_support"),
+                        "entryMode": entry_mode,
+                        "slBufferPct": sl_buffer,
                         "autoTrades": {i["symbol"].upper(): bool(i.get("autoTrade", False)) for i in raw_items if "symbol" in i},
                         "name": wl_doc.get("name", "Watchlist"),
                     }
@@ -247,6 +266,8 @@ class WatchlistProcessor:
             return
 
         strategy = meta.get("strategy", "orb_pullback_support")
+        entry_mode = meta.get("entryMode", "close")
+        sl_buffer_pct = float(meta.get("slBufferPct", 25.0))
         symbols = list(meta["symbols"])
 
         # Include benchmark indices for market context
@@ -266,9 +287,10 @@ class WatchlistProcessor:
                         sym,
                         token,
                         strategy,
-                        "close",
+                        entry_mode,
                         None,
                         False,
+                        sl_buffer_pct,
                     )
                     return sym.upper(), snap
                 except FyersTokenExpired:
@@ -339,7 +361,7 @@ class WatchlistProcessor:
                 sync_counter += 1
 
                 # 3. Evaluate each active watchlist in parallel
-                active_wids = list(set(self._user_active_watchlist.values()))
+                active_wids = list({wid for wids in self._user_active_watchlists.values() for wid in wids})
                 if active_wids:
                     await asyncio.gather(*[self._evaluate_watchlist(wid) for wid in active_wids], return_exceptions=True)
 

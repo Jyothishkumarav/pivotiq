@@ -278,21 +278,38 @@ function HoldingRow({
   const isUp = position.pnl >= 0;
   const isDayUp = position.dayChangePercent >= 0;
   const isClosed = position.netQty === 0;
-  const txIso = (isClosed && position.lastTransactionAt) ? position.lastTransactionAt : position.firstBoughtAt;
-  const boughtIso = txIso
-    ? txIso.endsWith("Z") || txIso.includes("+")
-      ? txIso
-      : txIso + "Z"
+  const side = position.side || (position.netQty < 0 ? "sell" : "buy");
+  const isBuy = side === "buy";
+  const bufferedSl = position.bufferedStopLoss || position.stopLoss || linkedSl;
+  const baseSl = position.strategyStopLoss;
+
+  const entryIso = position.firstBoughtAt;
+  const exitIso = isClosed ? position.lastTransactionAt : null;
+
+  const entryParsed = entryIso
+    ? new Date(entryIso.endsWith("Z") || entryIso.includes("+") ? entryIso : entryIso + "Z")
     : null;
-  const boughtDate = boughtIso
-    ? new Date(boughtIso).toLocaleDateString("en-IN", {
+  const entryDate = entryParsed
+    ? entryParsed.toLocaleDateString("en-IN", {
         day: "2-digit",
         month: "short",
         timeZone: "Asia/Kolkata",
       })
     : null;
-  const boughtTime = boughtIso
-    ? new Date(boughtIso).toLocaleTimeString("en-IN", {
+  const entryTime = entryParsed
+    ? entryParsed.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: "Asia/Kolkata",
+      })
+    : null;
+
+  const exitParsed = exitIso
+    ? new Date(exitIso.endsWith("Z") || exitIso.includes("+") ? exitIso : exitIso + "Z")
+    : null;
+  const exitTime = exitParsed
+    ? exitParsed.toLocaleTimeString("en-IN", {
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
@@ -309,7 +326,7 @@ function HoldingRow({
         paddingHorizontal: spacing.lg,
         paddingVertical: spacing.md,
         borderLeftWidth: 3,
-        borderLeftColor: isClosed ? (isUp ? colors.positive : colors.negative) : isUp ? colors.positive : colors.negative,
+        borderLeftColor: isUp ? colors.positive : colors.negative,
         opacity: isClosing ? 0.5 : isClosed ? 0.8 : 1,
       }}
     >
@@ -318,16 +335,20 @@ function HoldingRow({
           <Text variant="subtitle">{position.symbol}</Text>
           <Badge label={position.segment === "intraday" ? "MIS" : "CNC"} tone="neutral" />
           <Badge
-            label={isClosed ? "CLOSED (SL HIT)" : position.netQty > 0 ? "BUY" : "SELL / SHORT"}
-            tone={isClosed ? "warning" : position.netQty > 0 ? "positive" : "negative"}
+            label={isBuy ? "BUY" : "SELL / SHORT"}
+            tone={isBuy ? "positive" : "negative"}
           />
-          {linkedSl && !isClosed ? (
-            <Badge label={`SL ₹${linkedSl}`} tone="warning" />
+          {bufferedSl ? (
+            <Badge label={`SL ₹${bufferedSl.toFixed(2)}`} tone="warning" />
+          ) : null}
+          {baseSl && baseSl !== bufferedSl ? (
+            <Badge label={`Base SL ₹${baseSl.toFixed(2)}`} tone="neutral" />
           ) : null}
         </View>
-        {boughtDate ? (
+        {entryDate ? (
           <Text variant="caption" tone="muted">
-            {isClosed ? "Exited" : position.netQty > 0 ? "Bought" : "Shorted"} {boughtDate} · {boughtTime}
+            {isBuy ? "Bought" : "Shorted"} {entryDate} · {entryTime}
+            {isClosed && exitTime && exitTime !== entryTime ? `  ·  Exited ${exitTime}` : ""}
           </Text>
         ) : null}
       </View>
@@ -766,7 +787,7 @@ export default function PortfolioScreen() {
                       o.status === "open" &&
                       (o.order_type === "sl_m" || o.order_type === "sl_l" || o.purpose === "stop_loss")
                   );
-                  const activeSlPrice = slOrder?.stop_price || slOrder?.price || null;
+                  const activeSlPrice = p.stopLoss || slOrder?.stop_price || slOrder?.price || null;
                   return (
                     <HoldingRow
                       key={`${p.symbol}-${p.segment}`}

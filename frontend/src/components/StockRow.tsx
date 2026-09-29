@@ -130,12 +130,12 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           }}
         >
           {/* Symbol + intraday badge */}
-          <View style={{ flex: 1.3, paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 1.6, minWidth: 160, paddingHorizontal: 6, paddingRight: 16, gap: 2, overflow: "hidden" }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
               {liveTrend ? <TrendDot trend={liveTrend} /> : null}
-              <Text variant="subtitle">{item.symbol}</Text>
+              <Text variant="subtitle" numberOfLines={1} style={{ fontWeight: "700" }}>{item.symbol}</Text>
             </View>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
+            <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
               {intraday
                 ? `VWAP ${Math.round(intraday.vwap)} · ORB ${Math.round(intraday.openingRangeLow)}–${Math.round(intraday.openingRangeHigh)}`
                 : item.exchange}
@@ -143,22 +143,22 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* LTP column */}
-          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            <Text variant="mono">{effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}</Text>
+          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6 }}>
+            <Text variant="mono" numberOfLines={1}>{effectiveLtp !== null ? formatCurrency(effectiveLtp) : "—"}</Text>
           </View>
 
           {/* Day column: day change on top, vs-VWAP caption below */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.75, minWidth: 72, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {item.changePercent !== null && !intraday?.retestDate ? (
-              <Text variant="mono" tone={isUp ? "positive" : "negative"}>
+              <Text variant="mono" tone={isUp ? "positive" : "negative"} numberOfLines={1}>
                 {formatPercent(item.changePercent)}
               </Text>
             ) : intraday?.retestDate ? (
-              <Text variant="caption" tone="muted">
+              <Text variant="caption" tone="muted" numberOfLines={1}>
                 Session
               </Text>
             ) : (
-              <Text variant="mono" tone="muted">
+              <Text variant="mono" tone="muted" numberOfLines={1}>
                 —
               </Text>
             )}
@@ -180,7 +180,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Setup column: pill only */}
-          <View style={{ flex: 0.65, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.7, minWidth: 75, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               <SetupPill setup={intraday.tradeSetup} />
             ) : (
@@ -191,7 +191,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Entry column */}
-          <View style={{ flex: 0.9, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.9, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") ? (
               (() => {
                 const setup = intraday.tradeSetup;
@@ -242,7 +242,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Stop Loss column: tight stop + risk delta, macro stop below */}
-          <View style={{ flex: 1.4, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 1.45, minWidth: 145, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit" || intraday.tradeSetup.status === "pending_entry") ? (
               (() => {
                 const setup = intraday.tradeSetup;
@@ -302,7 +302,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 1.0, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.95, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -426,7 +426,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Δ Entry column: signed ₹ + % — positive means trade is going in your favor */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.9, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
                 const tradeEntry = intraday.tradeSetup.triggerPrice ?? intraday.tradeSetup.entry;
@@ -440,10 +440,10 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
                 const sign = signedDiff > 0 ? "+" : signedDiff < 0 ? "−" : "";
                 return (
                   <>
-                    <Text variant="mono" tone={tone}>
+                    <Text variant="mono" tone={tone} numberOfLines={1} style={{ fontSize: 12, lineHeight: 15, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {sign}{formatCurrency(Math.abs(signedDiff))}
                     </Text>
-                    <Text variant="caption" tone={tone}>
+                    <Text variant="caption" tone={tone} numberOfLines={1} style={{ fontSize: 11, lineHeight: 13, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {formatPercent(pct)}
                     </Text>
                   </>
@@ -457,7 +457,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Δ SL column: room to stop loss (positive = safe, negative = past stop) */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup && (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") && effectiveLtp !== null ? (
               (() => {
                 const governingSl =
@@ -475,10 +475,10 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
                 const sign = roomToSl > 0 ? "+" : roomToSl < 0 ? "−" : "";
                 return (
                   <>
-                    <Text variant="mono" tone={tone}>
+                    <Text variant="mono" tone={tone} numberOfLines={1} style={{ fontSize: 12, lineHeight: 15, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {sign}{formatCurrency(Math.abs(roomToSl))}
                     </Text>
-                    <Text variant="caption" tone={tone}>
+                    <Text variant="caption" tone={tone} numberOfLines={1} style={{ fontSize: 11, lineHeight: 13, ...(Platform.OS === "web" ? { whiteSpace: "nowrap" } as any : {}) }}>
                       {formatPercent(pct)}
                     </Text>
                   </>
@@ -492,16 +492,16 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Max Run column: peak profit gained after trigger (₹ + %) */}
-          <View style={{ flex: 0.8, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup &&
             (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
             intraday.tradeSetup.maxFavorableDelta !== undefined &&
             intraday.tradeSetup.maxFavorableDelta !== null ? (
               <>
-                <Text variant="mono" tone="positive">
+                <Text variant="mono" tone="positive" numberOfLines={1} style={{ fontSize: 12, lineHeight: 15 }}>
                   +{formatCurrency(intraday.tradeSetup.maxFavorableDelta)}
                 </Text>
-                <Text variant="caption" tone="positive" numberOfLines={1}>
+                <Text variant="caption" tone="positive" numberOfLines={1} style={{ fontSize: 11, lineHeight: 13 }}>
                   {formatPercent(intraday.tradeSetup.maxFavorablePercent ?? 0)}
                 </Text>
               </>
@@ -513,7 +513,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Time column: trigger time on line 1, peak profit time on line 2 */}
-          <View style={{ flex: 0.75, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+          <View style={{ flex: 0.7, minWidth: 68, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
             {intraday?.tradeSetup?.triggeredAt ? (
               <>
                 <Text variant="caption" tone="positive" numberOfLines={1}>
@@ -533,7 +533,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Live Trade column */}
-          <View style={{ flex: 0.95, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {onToggleAutoTrade ? (
               <Pressable
                 onPress={(e: any) => {

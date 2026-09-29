@@ -154,7 +154,8 @@ async def batch_intraday_snapshots(
     if not strategies.is_valid_strategy(payload.strategy):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown strategy")
 
-    wid = payload.watchlistId or watchlist_processor._user_active_watchlist.get(str(current_user["_id"]))
+    user_wids = getattr(watchlist_processor, "_user_active_watchlists", {}).get(str(current_user["_id"])) or []
+    wid = payload.watchlistId or (user_wids[0] if user_wids else None)
     retest_date = getattr(payload, "retestDate", None)
     entry_mode = getattr(payload, "entryMode", "close") or "close"
     include_first_candle = getattr(payload, "includeFirstCandle", False)
@@ -170,6 +171,11 @@ async def batch_intraday_snapshots(
             )
 
     token = await _require_fyers_token(current_user)
+
+    db = get_db()
+    from app.services import trading_service
+    trading_cfg = await trading_service.get_user_trading_config(current_user["_id"], db)
+    sl_buffer_pct = float(trading_cfg.get("slBufferPct", 25.0))
 
     # Each snapshot makes 2 Fyers calls (5m + 3m). Fyers rate-limits at ~10 req/s,
     # so cap to 2 concurrent snapshots with slight spacing to prevent 429 errors.
@@ -187,6 +193,7 @@ async def batch_intraday_snapshots(
                     entry_mode,
                     retest_date,
                     include_first_candle,
+                    sl_buffer_pct,
                 )
             except FyersTokenExpired:
                 snap = None
@@ -270,3 +277,155 @@ async def clear_intraday_triggers(
         deleted=deleted,
         message=f"Cleared {deleted} frozen trigger(s) for {payload.strategy} / {date_desc} / {symbol_desc}.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Swing High / Low SL Suggestion  (independent — not wired into trade flows)
+# ---------------------------------------------------------------------------
+
+class SwingLevelOut(BaseModel):
+    time: str           # HH:MM IST
+    price: float
+    candleOpen: float
+    candleHigh: float
+    candleLow: float
+    candleClose: float
+    distanceFromEntry: float
+    gapPct: float
+
+
+class SwingSLResponse(BaseModel):
+    symbol: str
+    side: str
+    entryPrice: float
+    resolution: str
+    date: str
+    strength: int
+    suggestedSL: float | None
+    suggestedSLTime: str | None   # "HH:MM" IST or None
+    gapPct: float | None
+    swingLevels: list[SwingLevelOut]
+    fallbackSL: float | None
+    fallbackPct: float
+    candlesFetched: int
+    error: str | None
+
+
+class SwingAnalyseResponse(BaseModel):
+    symbol: str
+    date: str
+    resolution: str
+    strength: int
+    totalCandles: int
+    swingHighs: list[dict]
+    swingLows: list[dict]
+    error: str | None = None
+
+
+@router.get("/{symbol}/swing-sl", response_model=SwingSLResponse, tags=["swing-sl"])
+async def get_swing_sl(
+    symbol: str,
+    side: str = Query(..., description="'buy' or 'sell'"),
+    entry_price: float = Query(..., alias="entryPrice", description="Trade entry price"),
+    date: str | None = Query(None, description="YYYY-MM-DD; defaults to today IST"),
+    resolution: str = Query("5", description="Fyers candle resolution in minutes"),
+    strength: int = Query(2, description="Pivot look-left/right bar count"),
+    fallback_pct: float = Query(0.3, alias="fallbackPct", description="Flat-% SL fallback"),
+    current_user: dict = Depends(get_current_user),
+) -> SwingSLResponse:
+    """Suggest a structurally-backed intraday Stop-Loss using swing pivot points.
+
+    For a SELL/SHORT trade it finds the nearest swing HIGH above entry_price.
+    For a BUY/LONG  trade it finds the nearest swing LOW  below entry_price.
+
+    This endpoint is completely independent of the live trade execution flow.
+    """
+    from app.services.swing_sl import suggest_sl
+    from app.services.market_context import get_active_fyers_token
+
+    token = get_active_fyers_token()
+    result = await asyncio.to_thread(
+        suggest_sl,
+        symbol=symbol,
+        side=side,
+        entry_price=entry_price,
+        access_token=token,
+        date=date,
+        resolution=resolution,
+        strength=strength,
+        fallback_pct=fallback_pct,
+    )
+
+    def _fmt_time(dt) -> str | None:
+        if dt is None:
+            return None
+        try:
+            from zoneinfo import ZoneInfo
+            return dt.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%H:%M")
+        except Exception:
+            return dt.strftime("%H:%M")
+
+    levels_out = [
+        SwingLevelOut(
+            time=_fmt_time(lv.time) or "",
+            price=lv.price,
+            candleOpen=lv.candle_open,
+            candleHigh=lv.candle_high,
+            candleLow=lv.candle_low,
+            candleClose=lv.candle_close,
+            distanceFromEntry=lv.distance_from_entry,
+            gapPct=lv.gap_pct,
+        )
+        for lv in result.swing_levels
+    ]
+
+    return SwingSLResponse(
+        symbol=result.symbol,
+        side=result.side,
+        entryPrice=result.entry_price,
+        resolution=result.resolution,
+        date=result.date,
+        strength=result.strength,
+        suggestedSL=result.suggested_sl,
+        suggestedSLTime=_fmt_time(result.suggested_sl_time),
+        gapPct=result.gap_pct,
+        swingLevels=levels_out,
+        fallbackSL=result.fallback_sl,
+        fallbackPct=result.fallback_pct,
+        candlesFetched=result.candles_fetched,
+        error=result.error,
+    )
+
+
+@router.get("/{symbol}/swing-analyse", response_model=SwingAnalyseResponse, tags=["swing-sl"])
+async def analyse_swing_levels(
+    symbol: str,
+    date: str | None = Query(None, description="YYYY-MM-DD; defaults to today IST"),
+    resolution: str = Query("5", description="Fyers candle resolution in minutes"),
+    strength: int = Query(2, description="Pivot look-left/right bar count"),
+    current_user: dict = Depends(get_current_user),
+) -> SwingAnalyseResponse:
+    """Return ALL intraday swing highs and swing lows for a symbol/date.
+
+    Diagnostic endpoint — useful for understanding the day's price structure
+    before choosing an SL level.  Does NOT require an entry_price.
+    """
+    from app.services.swing_sl import analyse_symbol_swings
+    from app.services.market_context import get_active_fyers_token
+
+    token = get_active_fyers_token()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail="Fyers not connected — intraday candles unavailable",
+        )
+
+    result = await asyncio.to_thread(
+        analyse_symbol_swings,
+        symbol=symbol,
+        access_token=token,
+        date=date,
+        resolution=resolution,
+        strength=strength,
+    )
+    return SwingAnalyseResponse(**result)

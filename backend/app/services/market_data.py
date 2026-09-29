@@ -64,6 +64,10 @@ def get_quote(symbol: str, access_token: str | None = None) -> Quote | None:
     return _get().get_quote(symbol, access_token=access_token or current_fyers_token())
 
 
+def get_quotes_batch(symbols: list[str], access_token: str | None = None) -> dict[str, Quote]:
+    return _get().get_quotes_batch(symbols, access_token=access_token or current_fyers_token())
+
+
 def get_fundamentals(symbol: str) -> Fundamentals | None:
     return _get().get_fundamentals(symbol)
 

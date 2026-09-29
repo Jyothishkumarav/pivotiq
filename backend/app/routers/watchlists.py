@@ -15,17 +15,20 @@ from app.schemas.watchlist import (
     WatchlistRename,
     WatchlistReorder,
 )
+from app.schemas.stock import Quote
 from app.services import market_data, strategies, support_levels
+from app.services.market_context import current_fyers_token
 from app.services.order_execution import sync_watchlist_entered_trades
 from app.services.watchlist_processor import watchlist_processor
 
 router = APIRouter(prefix="/watchlists", tags=["watchlists"], dependencies=[Depends(with_fyers_context)])
 
 
-def _enrich_item(raw_item: dict) -> WatchlistItemOut:
-    symbol = raw_item["symbol"]
+def _enrich_item(raw_item: dict, quote: Quote | None = None) -> WatchlistItemOut:
+    symbol = raw_item["symbol"].upper()
     auto_trade = bool(raw_item.get("autoTrade", False))
-    quote = market_data.get_quote(symbol)
+    if quote is None:
+        quote = market_data.get_quote(symbol)
     if quote is None:
         return WatchlistItemOut(
             symbol=symbol,
@@ -51,6 +54,14 @@ def _enrich_item(raw_item: dict) -> WatchlistItemOut:
         distanceToSupportPercent=distance,
         belowAllSupports=below_all,
     )
+
+
+def _enrich_items_batch(items: list[dict], token: str | None = None) -> list[WatchlistItemOut]:
+    if not items:
+        return []
+    syms = [i["symbol"] for i in items]
+    quotes_map = market_data.get_quotes_batch(syms, access_token=token)
+    return [_enrich_item(i, quote=quotes_map.get(i["symbol"].upper())) for i in items]
 
 
 def _sort_items(items: list[WatchlistItemOut], preference: str) -> list[WatchlistItemOut]:
@@ -93,23 +104,27 @@ async def _get_owned_watchlist(watchlist_id: str, user_id: ObjectId) -> dict:
 
 
 @router.get("", response_model=list[WatchlistOut])
-async def list_watchlists(current_user: dict = Depends(get_current_user)) -> list[WatchlistOut]:
+async def list_watchlists(current_user: dict = Depends(with_fyers_context)) -> list[WatchlistOut]:
     db = get_db()
     try:
         asyncio.create_task(sync_watchlist_entered_trades(current_user["_id"], db))
     except Exception:
         pass
     cursor = db.watchlists.find({"userId": current_user["_id"]}).sort("createdAt", 1)
+    docs = await cursor.to_list(length=100)
+    all_syms = list({item["symbol"] for doc in docs for item in doc.get("items", [])})
+    token = current_fyers_token()
+    quotes_map = market_data.get_quotes_batch(all_syms, access_token=token)
     result = []
-    async for doc in cursor:
-        enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    for doc in docs:
+        enriched = [_enrich_item(i, quote=quotes_map.get(i["symbol"].upper())) for i in doc.get("items", [])]
         sorted_items = _sort_items(enriched, doc.get("sortPreference", "alphabetical"))
         result.append(_to_out(doc, sorted_items))
     return result
 
 
 @router.post("", response_model=WatchlistOut, status_code=status.HTTP_201_CREATED)
-async def create_watchlist(payload: WatchlistCreate, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def create_watchlist(payload: WatchlistCreate, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     db = get_db()
     now = datetime.now(timezone.utc)
     doc = {
@@ -127,14 +142,14 @@ async def create_watchlist(payload: WatchlistCreate, current_user: dict = Depend
 
 
 @router.put("/{watchlist_id}", response_model=WatchlistOut)
-async def rename_watchlist(watchlist_id: str, payload: WatchlistRename, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def rename_watchlist(watchlist_id: str, payload: WatchlistRename, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     db = get_db()
     doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
     now = datetime.now(timezone.utc)
     await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"name": payload.name, "updatedAt": now}})
     doc["name"] = payload.name
     doc["updatedAt"] = now
-    enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    enriched = _enrich_items_batch(doc.get("items", []), token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
@@ -146,7 +161,7 @@ async def delete_watchlist(watchlist_id: str, current_user: dict = Depends(get_c
 
 
 @router.post("/{watchlist_id}/items", response_model=WatchlistOut, status_code=status.HTTP_201_CREATED)
-async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     if market_data.is_index_symbol(payload.symbol):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -174,7 +189,7 @@ async def add_item(watchlist_id: str, payload: WatchlistItemIn, current_user: di
     )
     watchlist_processor.notify_stock_added(watchlist_id, symbol, auto_trade=bool(payload.autoTrade))
     doc["items"] = doc.get("items", []) + [new_item]
-    enriched = [_enrich_item(i) for i in doc["items"]]
+    enriched = _enrich_items_batch(doc["items"], token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
@@ -183,7 +198,7 @@ async def toggle_item_autotrade(
     watchlist_id: str,
     symbol: str,
     payload: WatchlistItemAutoTradeUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(with_fyers_context),
 ) -> WatchlistOut:
     """Toggle auto-trade enablement for an individual watchlist item.
     When enabled, live broker orders (e.g. Fyers) hit alongside paper trade upon strategy trigger.
@@ -208,12 +223,12 @@ async def toggle_item_autotrade(
             i["autoTrade"] = payload.autoTrade
             break
     doc["updatedAt"] = now
-    enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    enriched = _enrich_items_batch(doc.get("items", []), token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
 @router.delete("/{watchlist_id}/items/{symbol}", response_model=WatchlistOut)
-async def remove_item(watchlist_id: str, symbol: str, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def remove_item(watchlist_id: str, symbol: str, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     db = get_db()
     doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
     now = datetime.now(timezone.utc)
@@ -222,12 +237,12 @@ async def remove_item(watchlist_id: str, symbol: str, current_user: dict = Depen
     )
     watchlist_processor.notify_stock_removed(watchlist_id, symbol.upper())
     doc["items"] = [i for i in doc.get("items", []) if i["symbol"] != symbol.upper()]
-    enriched = [_enrich_item(i) for i in doc["items"]]
+    enriched = _enrich_items_batch(doc["items"], token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))
 
 
 @router.put("/{watchlist_id}/reorder", response_model=WatchlistOut)
-async def reorder_items(watchlist_id: str, payload: WatchlistReorder, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def reorder_items(watchlist_id: str, payload: WatchlistReorder, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     db = get_db()
     doc = await _get_owned_watchlist(watchlist_id, current_user["_id"])
     by_symbol = {i["symbol"]: i for i in doc.get("items", [])}
@@ -241,12 +256,12 @@ async def reorder_items(watchlist_id: str, payload: WatchlistReorder, current_us
     )
     doc["items"] = reordered
     doc["sortPreference"] = "custom"
-    enriched = [_enrich_item(i) for i in reordered]
+    enriched = _enrich_items_batch(reordered, token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, "custom"))
 
 
 @router.put("/{watchlist_id}/sort-preference", response_model=WatchlistOut)
-async def set_sort_preference(watchlist_id: str, preference: str, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def set_sort_preference(watchlist_id: str, preference: str, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     if preference not in ("proximity", "alphabetical", "dayChange", "custom"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sort preference")
 
@@ -255,12 +270,12 @@ async def set_sort_preference(watchlist_id: str, preference: str, current_user: 
     now = datetime.now(timezone.utc)
     await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"sortPreference": preference, "updatedAt": now}})
     doc["sortPreference"] = preference
-    enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    enriched = _enrich_items_batch(doc.get("items", []), token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, preference))
 
 
 @router.put("/{watchlist_id}/strategy", response_model=WatchlistOut)
-async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = Depends(get_current_user)) -> WatchlistOut:
+async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = Depends(with_fyers_context)) -> WatchlistOut:
     """Selects which pluggable intraday trade-setup strategy this watchlist's
     symbols run against. Defaults to `"orb_vwap"` (the original behavior) and
     only changes anything for a watchlist that's explicitly switched."""
@@ -273,5 +288,5 @@ async def set_strategy(watchlist_id: str, strategy: str, current_user: dict = De
     await db.watchlists.update_one({"_id": doc["_id"]}, {"$set": {"strategy": strategy, "updatedAt": now}})
     watchlist_processor.invalidate_cache(watchlist_id)
     doc["strategy"] = strategy
-    enriched = [_enrich_item(i) for i in doc.get("items", [])]
+    enriched = _enrich_items_batch(doc.get("items", []), token=current_fyers_token())
     return _to_out(doc, _sort_items(enriched, doc.get("sortPreference", "alphabetical")))

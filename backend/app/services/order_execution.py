@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import logging
 import math
@@ -29,6 +30,20 @@ DEFAULT_ACCOUNT_CAPITAL = 100_000.0
 MAX_OPEN_POSITIONS = 10
 MAX_RISK_PER_TRADE = 1100.0
 LEVERAGE = 5.0
+
+# Per-user asyncio locks that serialise the "check position count → execute" flow inside
+# trigger_autotrade_if_enabled.  Without this, concurrent tasks (one per triggered symbol
+# in the same watchlist cycle) all read the same open-position count before any of them
+# commits to the DB, allowing more trades than maxOpenPositions.
+_autotrade_user_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_autotrade_lock(user_id: Any) -> asyncio.Lock:
+    """Return (creating if necessary) the per-user Lock for autotrade serialisation."""
+    key = str(user_id)
+    if key not in _autotrade_user_locks:
+        _autotrade_user_locks[key] = asyncio.Lock()
+    return _autotrade_user_locks[key]
 
 
 def round_to_tick(val: float, tick: float = 0.05) -> float:
@@ -124,10 +139,15 @@ def calculate_trade_sizing(
     margin_required = round_to_tick((final_qty * stock_price) / leverage)
     total_risk = round(final_qty * per_share_risk, 2)
 
+    if sl_buffer_pct <= 0.0:
+        sl_desc = f"SL: ₹{buffered_sl:.2f} (Swing SL / Direct — tight buffer bypassed)"
+    else:
+        sl_desc = f"Raw SL: ₹{tight_sl:.2f} -> Buffered SL ({sl_buffer_pct:.0f}% risk buffer): ₹{buffered_sl:.2f}"
+
     explanation = (
         f"Available Margin: ₹{available_capital:,.2f} | Trade Margin: ₹{max_trade_margin:,.2f} | "
         f"5x Buying Power: ₹{purchasing_power:,.2f} | "
-        f"Raw SL: ₹{tight_sl:.2f} -> Buffered SL ({sl_buffer_pct:.0f}% risk buffer): ₹{buffered_sl:.2f} | "
+        f"{sl_desc} | "
         f"Risk/sh: ₹{per_share_risk:.2f} | Qty: {final_qty} (Total Risk: ₹{total_risk:.2f} <= ₹{max_risk_amount:.2f})"
     )
 
@@ -269,6 +289,60 @@ async def execute_order_with_sl(
         eff_sl_buffer = sl_buffer_pct
         eff_max_risk = max_risk_amount
 
+    # ── Swing-based SL override (when enabled in settings) ───────────────────
+    swing_sl_enabled = bool(trading_cfg.get("swingSlEnabled", False))
+    swing_sl_buffer_pct = float(trading_cfg.get("swingSlBufferPct", 1.0))
+    effective_tight_sl = tight_sl  # may be overridden below
+    swing_sl_applied = False
+
+    if swing_sl_enabled:
+        try:
+            from app.services.swing_sl import suggest_sl
+            from app.services.market_context import get_active_fyers_token, current_fyers_token
+            fyers_tok = current_fyers_token()
+            if not fyers_tok and user_id is not None:
+                uid_obj = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else None
+                if uid_obj:
+                    fyers_tok = await get_active_fyers_token(uid_obj)
+            if not fyers_tok:
+                from app.services.market_data import _get
+                try:
+                    fyers_tok = _get()._get_active_fyers_token()
+                except Exception:
+                    pass
+            trade_date = (
+                triggered_at.astimezone(__import__("zoneinfo").ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+                if triggered_at else None
+            )
+            swing_result = suggest_sl(
+                symbol=symbol,
+                side=side.lower(),
+                entry_price=stock_price,
+                access_token=fyers_tok,
+                date=trade_date,
+                resolution="5",
+                strength=2,
+            )
+            if swing_result.suggested_sl is not None:
+                raw_swing_sl = swing_result.suggested_sl
+                # Apply user-configured buffer ON TOP of the swing level
+                if side.lower() == "sell":
+                    # SL is above entry for shorts; push it slightly higher
+                    effective_tight_sl = round(raw_swing_sl * (1 + swing_sl_buffer_pct / 100), 2)
+                else:
+                    # SL is below entry for longs; push it slightly lower
+                    effective_tight_sl = round(raw_swing_sl * (1 - swing_sl_buffer_pct / 100), 2)
+                swing_sl_applied = True
+                logger.info(
+                    "swing_sl: %s %s — swing level ₹%.2f + %.1f%% buffer → SL ₹%.2f (tight SL buffer bypassed; strategy tight SL was ₹%.2f)",
+                    symbol, side, raw_swing_sl, swing_sl_buffer_pct, effective_tight_sl, tight_sl,
+                )
+            else:
+                logger.info("swing_sl: no level found for %s; falling back to original tight SL ₹%.2f with tight buffer", symbol, tight_sl)
+        except Exception as exc:
+            logger.warning("swing_sl override failed for %s: %s — falling back to original tight SL with tight buffer", symbol, exc)
+    # ─────────────────────────────────────────────────────────────────────────
+
     target_date_str = None
     if triggered_at:
         target_date_str = triggered_at.date().isoformat() if hasattr(triggered_at, "date") else str(triggered_at)[:10]
@@ -331,14 +405,19 @@ async def execute_order_with_sl(
             message=f"Insufficient available margin in account (₹{avail_capital:,.2f}).",
         )
 
+    # Either Swing SL works OR Tight SL with tight buffer works — NOT both!
+    # When swing SL is applied, bypass the tight SL buffer (sl_buffer_pct = 0.0) so the
+    # swing SL (with its swing buffer %) is directly the placed stop-loss.
+    effective_sl_buffer = 0.0 if swing_sl_applied else eff_sl_buffer
+
     sizing = calculate_trade_sizing(
         available_capital=avail_capital,
         stock_price=stock_price,
-        tight_sl=tight_sl,
+        tight_sl=effective_tight_sl,
         capital_allocation_pct=capital_allocation_pct,
         max_risk_amount=eff_max_risk,
         leverage=5.0,
-        sl_buffer_pct=eff_sl_buffer,
+        sl_buffer_pct=effective_sl_buffer,
         account_capital=user_capital,
         max_open_positions=max_positions,
         side="buy" if is_buy else "sell",
@@ -418,6 +497,9 @@ async def execute_order_with_sl(
             "qty": order_qty,
             "stockPrice": stock_price,
             "tightSl": tight_sl,
+            "swingTightSl": effective_tight_sl if swing_sl_applied else None,
+            "swingSlEnabled": swing_sl_enabled,
+            "swingSlApplied": swing_sl_applied,
             "bufferedSl": sizing.bufferedSl,
             "entryOrderId": entry_res.order_id,
             "entryStatus": entry_res.status.value,
@@ -556,7 +638,7 @@ async def trigger_autotrade_if_enabled(
         return None
 
     entry_price = setup.triggerPrice or setup.entry or snapshot.currentPrice
-    tight_sl = setup.stopLoss
+    tight_sl = getattr(setup, "tightStop", None) or setup.stopLoss
     if not tight_sl or tight_sl <= 0 or not entry_price or entry_price <= 0:
         logger.warning("No valid price/stopLoss for auto-trade on %s", snapshot.symbol)
         return None
@@ -608,32 +690,97 @@ async def trigger_autotrade_if_enabled(
                 cache.set_json(paper_key, {"executed": True}, ttl_seconds=8 * 3600)
 
     if not paper_already_done:
-        try:
-            from app.services.brokers.paper_broker import PaperBroker
-            from app.services import trading_service
-            cfg = await trading_service.get_user_trading_config(user_id, db)
-            cfg_max_pos = int(cfg.get("maxOpenPositions", MAX_OPEN_POSITIONS))
-            alloc_pct = round(100.0 / max(1, cfg_max_pos), 2)
-            paper_broker = PaperBroker(user_id=user_id, db=db)
-            paper_res = await execute_order_with_sl(
-                broker=paper_broker,
-                symbol=sym_upper,
-                side=action,
-                stock_price=entry_price,
-                tight_sl=tight_sl,
-                capital_allocation_pct=alloc_pct,
-                max_risk_amount=float(cfg.get("maxRiskPerTrade", 1100.0)),
-                sl_buffer_pct=float(cfg.get("slBufferPct", 20.0)),
-                strategy=strategy_name,
-                db=db,
-                user_id=user_id,
-            )
-            if cache and paper_res.status == "success":
-                cache.set_json(paper_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
-            logger.info("Paper %s trade executed for %s on %s (order %s)", action, sym_upper, strategy_name, paper_res.buyOrder.order_id)
-            res_to_return = paper_res
-        except Exception as exc:
-            logger.error("Paper trade failed for %s on %s: %s", sym_upper, strategy_name, exc)
+        async with _get_autotrade_lock(user_id):
+            # Re-check inside the lock: another concurrent task may have already executed
+            # this trade while we were waiting.
+            _recheck_done = bool(cache and cache.exists(paper_key))
+            if not _recheck_done and db is not None:
+                _existing = await db.paper_orders.find_one({
+                    "userId": {"$in": user_ids},
+                    "symbol": sym_upper,
+                    "purpose": "entry",
+                    "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+                })
+                if _existing:
+                    _recheck_done = True
+                    if cache:
+                        cache.set_json(paper_key, {"executed": True}, ttl_seconds=8 * 3600)
+
+            if not _recheck_done:
+                # Check max positions while holding the lock — prevents concurrent tasks
+                # from all reading the same (stale) position count and all executing.
+                try:
+                    from app.services.brokers.paper_broker import PaperBroker as _PB
+                    _chk_broker = _PB(user_id=user_id, db=db)
+                    from app.services import trading_service as _ts
+                    _cfg = await _ts.get_user_trading_config(user_id, db)
+                    _max_pos = int(_cfg.get("maxOpenPositions", MAX_OPEN_POSITIONS))
+                    try:
+                        _chk_positions = await _chk_broker.get_positions(target_date=date_str)
+                    except TypeError:
+                        _chk_positions = await _chk_broker.get_positions()
+                    _open_count = sum(1 for p in _chk_positions if p.netQty != 0)
+                    if _open_count >= _max_pos:
+                        logger.info(
+                            "[autotrade] Skipping %s: max open positions (%d) reached (%d open)",
+                            sym_upper, _max_pos, _open_count,
+                        )
+                    else:
+                        try:
+                            from app.services.brokers.paper_broker import PaperBroker
+                            from app.services import trading_service as _ts2
+                            cfg = await _ts2.get_user_trading_config(user_id, db)
+                            cfg_max_pos = int(cfg.get("maxOpenPositions", MAX_OPEN_POSITIONS))
+                            alloc_pct = round(100.0 / max(1, cfg_max_pos), 2)
+                            paper_broker = PaperBroker(user_id=user_id, db=db)
+                            paper_res = await execute_order_with_sl(
+                                broker=paper_broker,
+                                symbol=sym_upper,
+                                side=action,
+                                stock_price=entry_price,
+                                tight_sl=tight_sl,
+                                capital_allocation_pct=alloc_pct,
+                                max_risk_amount=float(cfg.get("maxRiskPerTrade", 1100.0)),
+                                sl_buffer_pct=float(cfg.get("slBufferPct", 25.0)),
+                                strategy=strategy_name,
+                                db=db,
+                                user_id=user_id,
+                            )
+                            if cache and paper_res.status == "success":
+                                cache.set_json(paper_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
+                            logger.info("Paper %s trade executed for %s on %s (order %s)", action, sym_upper, strategy_name, paper_res.buyOrder.order_id)
+                            res_to_return = paper_res
+                        except Exception as exc:
+                            logger.error("Paper trade failed for %s on %s: %s", sym_upper, strategy_name, exc)
+                except Exception as _exc:
+                    logger.warning("[autotrade] Position pre-check failed for %s: %s", sym_upper, _exc)
+                    # Fall through to the original execution path on pre-check error
+                    try:
+                        from app.services.brokers.paper_broker import PaperBroker
+                        from app.services import trading_service as _ts_fb
+                        cfg = await _ts_fb.get_user_trading_config(user_id, db)
+                        cfg_max_pos = int(cfg.get("maxOpenPositions", MAX_OPEN_POSITIONS))
+                        alloc_pct = round(100.0 / max(1, cfg_max_pos), 2)
+                        paper_broker = PaperBroker(user_id=user_id, db=db)
+                        paper_res = await execute_order_with_sl(
+                            broker=paper_broker,
+                            symbol=sym_upper,
+                            side=action,
+                            stock_price=entry_price,
+                            tight_sl=tight_sl,
+                            capital_allocation_pct=alloc_pct,
+                            max_risk_amount=float(cfg.get("maxRiskPerTrade", 1100.0)),
+                            sl_buffer_pct=float(cfg.get("slBufferPct", 25.0)),
+                            strategy=strategy_name,
+                            db=db,
+                            user_id=user_id,
+                        )
+                        if cache and paper_res.status == "success":
+                            cache.set_json(paper_key, {"executed": True, "at": datetime.now(timezone.utc).isoformat()}, ttl_seconds=8 * 3600)
+                        logger.info("Paper %s trade executed for %s on %s (order %s)", action, sym_upper, strategy_name, paper_res.buyOrder.order_id)
+                        res_to_return = paper_res
+                    except Exception as exc2:
+                        logger.error("Paper trade failed for %s on %s: %s", sym_upper, strategy_name, exc2)
 
     # ---------------------------------------------------------
     # 2. IN PARALLEL: IF FYERS ENABLED, ALSO EXECUTE LIVE ON FYERS
@@ -673,7 +820,7 @@ async def trigger_autotrade_if_enabled(
                     tight_sl=tight_sl,
                     capital_allocation_pct=float(strat_cfg.get("capitalAllocationPct", 50.0)),
                     max_risk_amount=float(strat_cfg.get("maxRiskPerTrade", 1100.0)),
-                    sl_buffer_pct=float(strat_cfg.get("slBufferPct", 20.0)),
+                    sl_buffer_pct=float(strat_cfg.get("slBufferPct", 25.0)),
                     strategy=strategy_name,
                     db=db,
                     user_id=user_id,
@@ -753,127 +900,142 @@ async def sync_watchlist_entered_trades(
         except Exception:
             cache = None
 
-        seen_syms: set[str] = set()
-        for t in triggers:
-            sym = t["symbol"].upper()
-            if sym in seen_syms:
-                continue
-            entry_price = t.get("triggerPrice")
-            tight_sl = t.get("stopLoss")
-            action = str(t.get("action") or "").lower()
-            strat = t.get("strategy") or symbols_map[sym]["strategy"]
+        async with _get_autotrade_lock(user_id):
+            seen_syms: set[str] = set()
+            for t in triggers:
+                sym = t["symbol"].upper()
+                if sym in seen_syms:
+                    continue
+                entry_price = t.get("triggerPrice")
+                tight_sl = t.get("tightStop") or t.get("stopLoss")
+                action = str(t.get("action") or "").lower()
+                strat = t.get("strategy") or symbols_map[sym]["strategy"]
 
-            if not entry_price or entry_price <= 0 or not tight_sl or tight_sl <= 0 or action not in ("buy", "sell"):
-                continue
-
-            if is_index_symbol(sym):
-                continue
-
-            # User Rule: Strictly no fresh entries before 09:30 AM IST (04:00 UTC) or after 02:30 PM IST (09:00 UTC)
-            t_at = t.get("triggeredAt")
-            if t_at:
-                t_dt = t_at.astimezone(timezone.utc) if t_at.tzinfo else t_at.replace(tzinfo=timezone.utc)
-                t_min = t_dt.hour * 60 + t_dt.minute
-                if t_min < 240 or t_min > 540:
+                if not entry_price or entry_price <= 0 or not tight_sl or tight_sl <= 0 or action not in ("buy", "sell"):
                     continue
 
-            seen_syms.add(sym)
-            is_live = symbols_map[sym]["is_live"]
+                if is_index_symbol(sym):
+                    continue
 
-            # Check if user already reached max open positions for this session
-            uid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else user_id
-            from app.services.brokers import get_broker
-            target_broker = await get_broker("fyers" if is_live else "paper", uid, db)
-            try:
-                current_positions = await target_broker.get_positions(target_date=date_str)
-            except TypeError:
-                current_positions = await target_broker.get_positions()
-            current_open_syms = {p.symbol for p in current_positions if p.netQty != 0}
-            if sym in current_open_syms:
-                continue
-            if len(current_open_syms) >= max_positions:
-                logger.info("Reached maximum %d open positions for %s, stopping auto-sync", max_positions, date_str)
-                break
+                # User Rule: Strictly no fresh entries before 09:30 AM IST (04:00 UTC) or after 02:30 PM IST (09:00 UTC)
+                t_at = t.get("triggeredAt")
+                if t_at:
+                    t_dt = t_at.astimezone(timezone.utc) if t_at.tzinfo else t_at.replace(tzinfo=timezone.utc)
+                    t_min = t_dt.hour * 60 + t_dt.minute
+                    if t_min < 240 or t_min > 540:
+                        continue
 
-            try:
-                current_funds = await target_broker.get_funds(target_date=date_str)
-            except TypeError:
-                current_funds = await target_broker.get_funds()
-            if current_funds.available_balance <= 0:
-                logger.info("No available margin remaining (₹%.2f) for %s, stopping auto-sync", current_funds.available_balance, date_str)
-                break
+                seen_syms.add(sym)
+                is_live = symbols_map[sym]["is_live"]
 
-            start_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
-            end_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
-            triggered_at = t.get("triggeredAt")
-
-            # -------------------------------------------------------------
-            # 1. ALWAYS EXECUTE PAPER TRADE (UNIVERSAL BASELINE DEFAULT)
-            # -------------------------------------------------------------
-            existing_paper = await db.paper_orders.find_one({
-                "userId": {"$in": user_ids},
-                "symbol": sym,
-                "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
-            })
-            if not existing_paper:
+                # Check if user already reached max open positions for this session
+                uid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else user_id
+                from app.services.brokers import get_broker
+                target_broker = await get_broker("fyers" if is_live else "paper", uid, db)
                 try:
-                    from app.services.brokers.paper_broker import PaperBroker
-                    uid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else user_id
-                    paper_broker = PaperBroker(user_id=uid, db=db)
-                    res_paper = await execute_order_with_sl(
-                        broker=paper_broker,
-                        symbol=sym,
-                        side=action,
-                        stock_price=float(entry_price),
-                        tight_sl=float(tight_sl),
-                        sl_buffer_pct=cfg_buffer,
-                        max_risk_amount=cfg_risk,
-                        strategy=strat,
-                        db=db,
-                        user_id=uid if isinstance(uid, ObjectId) else None,
-                        triggered_at=triggered_at,
-                    )
-                    if res_paper.status == "success":
-                        paper_order_key = f"autotrade:paper:{sym}:{strat}:{date_str}"
-                        if cache:
-                            cache.set_json(paper_order_key, {"executed": True}, ttl_seconds=8 * 3600)
-                        results.append(res_paper)
-                        logger.info("Paper auto-trade synced for %s (%s): order %s", sym, action, res_paper.buyOrder.order_id)
-                    else:
-                        logger.warning("Paper auto-trade rejected for %s (%s): %s", sym, action, res_paper.message)
-                except Exception as exc:
-                    logger.error("Failed executing paper auto-trade for %s: %s", sym, exc)
+                    current_positions = await target_broker.get_positions(target_date=date_str)
+                except TypeError:
+                    current_positions = await target_broker.get_positions()
+                current_open_syms = {p.symbol for p in current_positions if p.netQty != 0}
+                if sym in current_open_syms:
+                    continue
+                if len(current_open_syms) >= max_positions:
+                    logger.info("Reached maximum %d open positions for %s, stopping auto-sync", max_positions, date_str)
+                    break
 
-            # -------------------------------------------------------------
-            # 2. IN PARALLEL: IF LIVE TRADE ENABLED, ALSO EXECUTE ON FYERS
-            # -------------------------------------------------------------
-            if is_live and not existing_chain:
                 try:
-                    from app.services.brokers import get_broker
-                    broker = await get_broker("fyers", user_ids[0], db)
-                    res_fyers = await execute_order_with_sl(
-                        broker=broker,
-                        symbol=sym,
-                        side=action,
-                        stock_price=float(entry_price),
-                        tight_sl=float(tight_sl),
-                        sl_buffer_pct=cfg_buffer,
-                        max_risk_amount=cfg_risk,
-                        strategy=strat,
-                        db=db,
-                        user_id=ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else None,
-                        triggered_at=triggered_at,
-                    )
-                    if res_fyers.status == "success":
-                        fyers_order_key = f"autotrade:fyers:{sym}:{strat}:{date_str}"
-                        if cache:
-                            cache.set_json(fyers_order_key, {"executed": True}, ttl_seconds=8 * 3600)
-                        results.append(res_fyers)
-                        logger.info("Live Fyers auto-trade synced for %s (%s): order %s", sym, action, res_fyers.buyOrder.order_id)
-                    else:
-                        logger.warning("Live Fyers auto-trade rejected for %s: %s", sym, res_fyers.message)
-                except Exception as exc:
-                    logger.error("Failed executing live auto-trade for %s: %s", sym, exc)
+                    current_funds = await target_broker.get_funds(target_date=date_str)
+                except TypeError:
+                    current_funds = await target_broker.get_funds()
+                if current_funds.available_balance <= 0:
+                    logger.info("No available margin remaining (₹%.2f) for %s, stopping auto-sync", current_funds.available_balance, date_str)
+                    break
+
+                start_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+                end_of_day = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
+                triggered_at = t.get("triggeredAt")
+
+                # -------------------------------------------------------------
+                # 1. ALWAYS EXECUTE PAPER TRADE (UNIVERSAL BASELINE DEFAULT)
+                # -------------------------------------------------------------
+                existing_paper = await db.paper_orders.find_one({
+                    "userId": {"$in": user_ids},
+                    "symbol": sym,
+                    "purpose": "entry",
+                    "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+                })
+                existing_trade = await db.paper_trades.find_one({
+                    "userId": {"$in": user_ids},
+                    "symbol": sym,
+                    "purpose": "entry",
+                    "executedAt": {"$gte": start_of_day, "$lte": end_of_day},
+                })
+                if not existing_paper and not existing_trade:
+                    try:
+                        from app.services.brokers.paper_broker import PaperBroker
+                        uid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else user_id
+                        paper_broker = PaperBroker(user_id=uid, db=db)
+                        res_paper = await execute_order_with_sl(
+                            broker=paper_broker,
+                            symbol=sym,
+                            side=action,
+                            stock_price=float(entry_price),
+                            tight_sl=float(tight_sl),
+                            sl_buffer_pct=cfg_buffer,
+                            max_risk_amount=cfg_risk,
+                            strategy=strat,
+                            db=db,
+                            user_id=uid if isinstance(uid, ObjectId) else None,
+                            triggered_at=triggered_at,
+                        )
+                        if res_paper.status == "success":
+                            paper_order_key = f"autotrade:paper:{sym}:{strat}:{date_str}"
+                            if cache:
+                                cache.set_json(paper_order_key, {"executed": True}, ttl_seconds=8 * 3600)
+                            results.append(res_paper)
+                            logger.info("Paper auto-trade synced for %s (%s): order %s", sym, action, res_paper.buyOrder.order_id)
+                        else:
+                            logger.warning("Paper auto-trade rejected for %s (%s): %s", sym, action, res_paper.message)
+                    except Exception as exc:
+                        logger.error("Failed executing paper auto-trade for %s: %s", sym, exc)
+
+                # -------------------------------------------------------------
+                # 2. IN PARALLEL: IF LIVE TRADE ENABLED, ALSO EXECUTE ON FYERS
+                # -------------------------------------------------------------
+                if is_live:
+                    existing_chain = await db.order_chains.find_one({
+                        "userId": {"$in": user_ids},
+                        "symbol": sym,
+                        "broker": "fyers",
+                        "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
+                    })
+                    if not existing_chain:
+                        try:
+                            from app.services.brokers import get_broker
+                            broker = await get_broker("fyers", user_ids[0], db)
+                            res_fyers = await execute_order_with_sl(
+                                broker=broker,
+                                symbol=sym,
+                                side=action,
+                                stock_price=float(entry_price),
+                                tight_sl=float(tight_sl),
+                                sl_buffer_pct=cfg_buffer,
+                                max_risk_amount=cfg_risk,
+                                strategy=strat,
+                                db=db,
+                                user_id=ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else None,
+                                triggered_at=triggered_at,
+                            )
+                            if res_fyers.status == "success":
+                                fyers_order_key = f"autotrade:fyers:{sym}:{strat}:{date_str}"
+                                if cache:
+                                    cache.set_json(fyers_order_key, {"executed": True}, ttl_seconds=8 * 3600)
+                                results.append(res_fyers)
+                                logger.info("Live Fyers auto-trade synced for %s (%s): order %s", sym, action, res_fyers.buyOrder.order_id)
+                            else:
+                                logger.warning("Live Fyers auto-trade rejected for %s: %s", sym, res_fyers.message)
+                        except Exception as exc:
+                            logger.error("Failed executing live auto-trade for %s: %s", sym, exc)
     except Exception as e:
         logger.error("Error in sync_watchlist_entered_trades: %s", e)
 

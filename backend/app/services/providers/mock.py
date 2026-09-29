@@ -77,6 +77,14 @@ class MockProvider:
             lastUpdated=datetime.now(timezone.utc),
         )
 
+    def get_quotes_batch(self, symbols: list[str], access_token: str | None = None) -> dict[str, Quote]:
+        res: dict[str, Quote] = {}
+        for s in symbols:
+            q = self.get_quote(s, access_token=access_token)
+            if q is not None:
+                res[s.upper()] = q
+        return res
+
     def get_fundamentals(self, symbol: str) -> Fundamentals | None:
         raw = self._raw(symbol)
         if raw is None:
