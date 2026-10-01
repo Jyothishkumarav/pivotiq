@@ -69,6 +69,23 @@ class PositionOut(BaseModel):
     stopLoss: float | None = None
     bufferedStopLoss: float | None = None
     strategyStopLoss: float | None = None
+    fyersUrl: str | None = None
+
+
+class TradeNotificationOut(BaseModel):
+    id: str
+    symbol: str
+    fyersSymbol: str
+    fyersUrl: str
+    side: str
+    qty: int
+    entryPrice: float
+    stopLoss: float
+    strategy: str | None = None
+    time: datetime
+    status: str
+    message: str
+    read: bool = False
 
 
 class PortfolioSummary(BaseModel):
@@ -79,3 +96,4 @@ class PortfolioSummary(BaseModel):
     pnlPercent: float
     todayPnl: float
     holdingsCount: int
+

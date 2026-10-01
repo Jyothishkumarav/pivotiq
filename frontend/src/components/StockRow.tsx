@@ -302,7 +302,7 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 0.95, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 1.35, minWidth: 130, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -532,55 +532,8 @@ export function StockRow({ item, intraday, onPress, onRemove, onToggleAutoTrade 
             )}
           </View>
 
-          {/* Live Trade column */}
-          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            {onToggleAutoTrade ? (
-              <Pressable
-                onPress={(e: any) => {
-                  e?.stopPropagation?.();
-                  onToggleAutoTrade(!item.autoTrade);
-                }}
-                hitSlop={6}
-                style={({ hovered: btnHovered }: any) => ({
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                  borderRadius: radius.full,
-                  backgroundColor: item.autoTrade ? "rgba(61, 219, 159, 0.16)" : colors.surfaceElevated,
-                  borderWidth: 1.5,
-                  borderColor: item.autoTrade ? colors.positive : btnHovered ? colors.border : colors.borderSubtle,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 4,
-                })}
-              >
-                <View
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: item.autoTrade ? colors.positive : colors.textMuted,
-                  }}
-                />
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: "700",
-                    letterSpacing: 0.3,
-                    color: item.autoTrade ? colors.positive : colors.textSecondary,
-                  }}
-                >
-                  {item.autoTrade ? "FYERS" : "PAPER"}
-                </Text>
-              </Pressable>
-            ) : (
-              <Text variant="mono" tone="muted">
-                —
-              </Text>
-            )}
-          </View>
-
           {/* Action / remove column */}
-          <View style={{ width: 42, alignItems: "flex-end" }}>
+          <View style={{ width: 36, alignItems: "flex-end", flexShrink: 0, justifyContent: "center" }}>
             {onRemove ? <RemoveButton onPress={onRemove} /> : null}
           </View>
         </Card>

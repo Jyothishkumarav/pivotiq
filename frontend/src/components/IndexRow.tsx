@@ -266,7 +266,7 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Status column */}
-          <View style={{ flex: 0.95, minWidth: 90, alignItems: "flex-end", paddingHorizontal: 6 }}>
+          <View style={{ flex: 1.35, minWidth: 130, alignItems: "flex-end", paddingHorizontal: 6 }}>
             {intraday?.tradeSetup ? (
               (() => {
                 if (intraday.tradeSetup.stageLabel) {
@@ -450,18 +450,19 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
           </View>
 
           {/* Max Run column */}
-          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            <Text variant="mono" tone="muted">
-              —
-            </Text>
-          </View>
-
-          {/* Time column */}
-          <View style={{ flex: 0.7, minWidth: 68, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            {intraday?.tradeSetup?.triggeredAt ? (
-              <Text variant="caption" tone="positive" numberOfLines={1}>
-                {formatIstTime(intraday.tradeSetup.triggeredAt)}
-              </Text>
+          <View style={{ flex: 0.85, minWidth: 85, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+            {intraday?.tradeSetup &&
+            (intraday.tradeSetup.status === "triggered" || intraday.tradeSetup.status === "sl_hit") &&
+            intraday.tradeSetup.maxFavorableDelta !== undefined &&
+            intraday.tradeSetup.maxFavorableDelta !== null ? (
+              <>
+                <Text variant="mono" tone="positive" numberOfLines={1} style={{ fontSize: 12, lineHeight: 15 }}>
+                  +{intraday.tradeSetup.maxFavorableDelta.toFixed(2)}
+                </Text>
+                <Text variant="caption" tone="positive" numberOfLines={1} style={{ fontSize: 11, lineHeight: 13 }}>
+                  {formatPercent(intraday.tradeSetup.maxFavorablePercent ?? 0)}
+                </Text>
+              </>
             ) : (
               <Text variant="mono" tone="muted">
                 —
@@ -469,15 +470,28 @@ export function IndexRow({ name, symbol, intraday, accentColor = colors.accent, 
             )}
           </View>
 
-          {/* Live Trade column (indices are not directly traded from this equity row) */}
-          <View style={{ flex: 0.95, minWidth: 95, alignItems: "flex-end", paddingHorizontal: 6 }}>
-            <Text variant="mono" tone="muted">
-              —
-            </Text>
+          {/* Time column */}
+          <View style={{ flex: 0.7, minWidth: 68, alignItems: "flex-end", paddingHorizontal: 6, gap: 2 }}>
+            {intraday?.tradeSetup?.triggeredAt ? (
+              <>
+                <Text variant="caption" tone="positive" numberOfLines={1}>
+                  {formatIstTime(intraday.tradeSetup.triggeredAt)}
+                </Text>
+                {intraday.tradeSetup.maxFavorableTime ? (
+                  <Text variant="caption" tone="muted" numberOfLines={1} style={{ fontSize: 10 }}>
+                    @{intraday.tradeSetup.maxFavorableTime}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <Text variant="mono" tone="muted">
+                —
+              </Text>
+            )}
           </View>
 
-          {/* 42px spacer matching RemoveButton width in StockRow */}
-          <View style={{ width: 42 }} />
+          {/* 36px spacer matching RemoveButton width in StockRow */}
+          <View style={{ width: 36, flexShrink: 0 }} />
         </Card>
       )}
     </Pressable>

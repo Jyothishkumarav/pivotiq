@@ -10,7 +10,8 @@ import { QuickTradeModal } from "@/components/QuickTradeModal";
 import { tradingApi } from "@/api/trading";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
 import { formatCurrency, formatPercent, formatRelativeTime } from "@/utils/format";
-import { BrokerType, Position, Segment } from "@/types";
+import { BrokerType, Position, Segment, TradeNotification } from "@/types";
+import { formatTimeIST, openFyersWeb } from "@/components/TradeNotificationBell";
 
 interface TradingDay {
   iso: string;
@@ -237,6 +238,7 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
               justifyContent: col.align === "flex-end" ? "flex-end" : "flex-start",
               gap: 6,
               paddingHorizontal: spacing.xs,
+              paddingRight: col.key === "pnl" ? spacing.md : spacing.xs,
               paddingVertical: 2,
               borderRadius: 4,
               backgroundColor: hovered ? colors.surfaceElevated : "transparent",
@@ -257,7 +259,7 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
           </Pressable>
         );
       })}
-      <View style={{ width: 42 }} />
+      <View style={{ width: 124 }} />
     </View>
   );
 }
@@ -342,7 +344,7 @@ function HoldingRow({
             <Badge label={`SL ₹${bufferedSl.toFixed(2)}`} tone="warning" />
           ) : null}
           {baseSl && baseSl !== bufferedSl ? (
-            <Badge label={`Base SL ₹${baseSl.toFixed(2)}`} tone="neutral" />
+            <Badge label={`Tight SL ₹${baseSl.toFixed(2)}`} tone="neutral" />
           ) : null}
         </View>
         {entryDate ? (
@@ -373,7 +375,7 @@ function HoldingRow({
         </Text>
       </View>
 
-      <View style={{ flex: 1.4, alignItems: "flex-end", gap: 2 }}>
+      <View style={{ flex: 1.4, alignItems: "flex-end", gap: 2, paddingRight: spacing.md }}>
         <Text variant="mono" tone={isUp ? "positive" : "negative"}>
           {isUp ? "+" : "−"}
           {formatCurrency(Math.abs(position.pnl))}
@@ -383,15 +385,36 @@ function HoldingRow({
         </Text>
       </View>
 
-      <View style={{ width: 42, alignItems: "flex-end" }}>
+      <View style={{ width: 124, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.xs }}>
+        {/* Direct Fyers Web Placement Link */}
+        <Pressable
+          onPress={(e: any) => {
+            e?.stopPropagation?.();
+            openFyersWeb(position.symbol);
+          }}
+          style={({ hovered }: any) => [
+            {
+              paddingHorizontal: 6,
+              paddingVertical: 3,
+              borderRadius: radius.sm,
+              backgroundColor: hovered ? "#1A56DB" : "rgba(37,99,235,0.18)",
+              borderWidth: 1,
+              borderColor: hovered ? "#3B82F6" : "rgba(59,130,246,0.35)",
+            },
+          ]}
+          accessibilityLabel={`Place ${position.symbol} on Fyers`}
+        >
+          <Text variant="caption" style={{ color: "#93C5FD", fontWeight: "700", fontSize: 10 }}>
+            Fyers ↗
+          </Text>
+        </Pressable>
+
         {readOnly ? (
           <Text variant="caption" tone="muted" style={{ fontSize: 11 }}>
             Locked
           </Text>
         ) : isClosed ? (
-          <Text variant="caption" tone="muted" style={{ fontSize: 11, fontWeight: "600" }}>
-            CLOSED
-          </Text>
+          <Badge label="CLOSED" tone="neutral" />
         ) : (
           <ClosePositionButton onPress={onClose} disabled={isClosing} />
         )}
@@ -434,6 +457,107 @@ function ClosePositionButton({ onPress, disabled }: { onPress: () => void; disab
         ×
       </Text>
     </Pressable>
+  );
+}
+
+function PortfolioEntryAlertBanner() {
+  const { data: notifications = [] } = useQuery<TradeNotification[]>({
+    queryKey: ["trade-notifications"],
+    queryFn: tradingApi.getTradeNotifications,
+    refetchInterval: 3000,
+  });
+
+  if (!notifications || notifications.length === 0) return null;
+
+  return (
+    <Card
+      style={{
+        backgroundColor: "#0D182E",
+        borderColor: "#2563EB",
+        borderWidth: 1.5,
+        gap: spacing.sm,
+        padding: spacing.md,
+      }}
+    >
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: spacing.xs }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Text style={{ fontSize: 16 }}>⚡</Text>
+          <Text variant="subtitle" style={{ fontSize: 15, fontWeight: "800", color: colors.textPrimary }}>
+            Intraday Trade Entries Created Today ({notifications.length})
+          </Text>
+        </View>
+        <Badge label="Assisted Fyers Placement" tone="neutral" />
+      </View>
+
+
+      <Text variant="caption" tone="secondary">
+        Direct 1-click links to place your orders on Fyers Web with the exact suggested quantity and stop loss:
+      </Text>
+
+      <View style={{ gap: spacing.xs, marginTop: 4 }}>
+        {notifications.slice(0, 4).map((item) => {
+          const isBuy = item.side.toLowerCase() === "buy";
+          return (
+            <View
+              key={item.id}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: spacing.sm,
+                backgroundColor: colors.surface,
+                padding: spacing.sm,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+                <Badge
+                  label={isBuy ? "BUY" : "SELL"}
+                  tone={isBuy ? "positive" : "negative"}
+                />
+                <Text variant="bodyStrong" style={{ fontWeight: "800", color: colors.textPrimary, fontSize: 15 }}>
+                  {item.symbol}
+                </Text>
+                <Text variant="caption" tone="muted">
+                  Qty: <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{item.qty}</Text>
+                </Text>
+                <Text variant="caption" tone="muted">
+                  Entry: <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{formatCurrency(item.entryPrice)}</Text>
+                </Text>
+                <Text variant="caption" tone="warning" style={{ fontWeight: "700" }}>
+                  SL: {formatCurrency(item.stopLoss)}
+                </Text>
+                <Text variant="caption" tone="muted">
+                  {formatTimeIST(item.time)}
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => openFyersWeb(item.symbol)}
+                style={({ hovered }: any) => [
+                  {
+                    backgroundColor: hovered ? "#2563EB" : "#1D4ED8",
+                    paddingVertical: 5,
+                    paddingHorizontal: spacing.md,
+                    borderRadius: radius.sm,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                  },
+                ]}
+              >
+                <Text variant="caption" style={{ color: "#fff", fontWeight: "700" }}>
+                  Place on Fyers ({item.fyersSymbol}) ↗
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
+    </Card>
   );
 }
 
@@ -727,6 +851,9 @@ export default function PortfolioScreen() {
         <View style={{ gap: spacing.lg }}>
           <Segmented value={segment} options={SEGMENT_OPTIONS} onChange={setSegment} />
           <SummaryHero segment={segment} broker={broker} date={retestDate} />
+
+          {/* Trade Entry Alert Banner for Fyers Assisted Execution */}
+          {!retestDate && <PortfolioEntryAlertBanner />}
 
           <View style={{ gap: spacing.md }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>

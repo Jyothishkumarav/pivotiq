@@ -25,8 +25,8 @@ const STRATEGY_DESCRIPTIONS: Record<string, string> = {
     "Waits for pullback to complete, enters on break of pullback high/low.",
   orb_pullback_support:
     "Early entry on break of the first supporting reversal candle.",
-  orb_flow:
-    "Morning window breakout with 3m close confirmation and index confluence position sizing.",
+  breakout_support:
+    "Dynamic reversal breakout with pullback support entry and adaptive MSL.",
 };
 
 const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
@@ -34,10 +34,11 @@ const STRATEGY_BADGES: Record<string, { glyph: string; color: string }> = {
   context_gated: { glyph: "🛡️", color: "#9AA9C7" },
   orb_pullback: { glyph: "🔄", color: "#F5B54A" },
   orb_pullback_support: { glyph: "🎯", color: "#3DDB9F" },
-  orb_flow: { glyph: "⚡", color: "#7B61FF" },
+  breakout_support: { glyph: "🎯", color: "#7B61FF" },
 };
 
 const DEFAULT_AVAILABLE_CHANNELS: TelegramChannelOption[] = [
+  { id: "-1003999053085", name: "FyersTrade" },
   { id: "-1004449069761", name: "Pivotiq_Tuned" },
   { id: "-1004294022390", name: "PivotIQ_15_Mins_Break" },
   { id: "-1004440440854", name: "Pivotiqupdate" },

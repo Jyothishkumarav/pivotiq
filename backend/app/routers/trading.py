@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_db
 from app.dependencies import get_current_user, with_fyers_context
-from app.schemas.trade import OrderStatus, PortfolioSummary, PositionOut, Segment, TradeCreate, TradeOut
+from app.schemas.trade import OrderStatus, PortfolioSummary, PositionOut, Segment, TradeCreate, TradeNotificationOut, TradeOut
 from app.services import market_data, trading_service
 from app.services.brokers import (
     BaseBroker,
@@ -338,3 +338,85 @@ async def reset_paper_account(
         "deletedTrades": del_trades.deleted_count,
         "deletedOrders": del_orders.deleted_count,
     }
+
+
+@router.get("/trades/notifications", response_model=list[TradeNotificationOut])
+async def list_trade_notifications(
+    current_user: dict = Depends(get_current_user),
+) -> list[TradeNotificationOut]:
+    db = get_db()
+    user_ids = [current_user["_id"], str(current_user["_id"])]
+    if ObjectId.is_valid(str(current_user["_id"])):
+        user_ids.append(ObjectId(str(current_user["_id"])))
+
+    today_utc = datetime.now(timezone.utc).date()
+    start_of_day = datetime(today_utc.year, today_utc.month, today_utc.day, tzinfo=timezone.utc)
+
+    # 1. Fetch from db.trade_notifications
+    docs = await db.trade_notifications.find({
+        "userId": {"$in": user_ids},
+        "placedAt": {"$gte": start_of_day},
+    }).sort("placedAt", -1).to_list(100)
+
+    # 2. If no notifications recorded yet (or prior trades exist in order_chains), backfill from order_chains
+    if not docs:
+        chains = await db.order_chains.find({
+            "userId": {"$in": user_ids},
+            "placedAt": {"$gte": start_of_day},
+        }).sort("placedAt", -1).to_list(100)
+        for c in chains:
+            sym = str(c.get("symbol", "")).upper()
+            side = str(c.get("side", "buy")).lower()
+            qty = int(c.get("qty", 1))
+            price = float(c.get("stockPrice", 0.0))
+            sl = float(c.get("bufferedSl", 0.0) or c.get("tightSl", 0.0))
+            fyers_sym = f"NSE:{sym}-EQ"
+            docs.append({
+                "_id": c["_id"],
+                "symbol": sym,
+                "fyersSymbol": fyers_sym,
+                "fyersUrl": f"https://fyers.in/web/symbol/{fyers_sym}",
+                "side": side,
+                "qty": qty,
+                "entryPrice": price,
+                "stopLoss": sl,
+                "strategy": c.get("strategy"),
+                "placedAt": c.get("placedAt") or datetime.now(timezone.utc),
+                "read": False,
+                "status": "triggered",
+                "message": f"{side.upper()} {qty} {sym} @ ₹{price:.2f} | SL ₹{sl:.2f}",
+            })
+
+    out = []
+    for d in docs:
+        out.append(TradeNotificationOut(
+            id=str(d.get("_id", "")),
+            symbol=d.get("symbol", "").upper(),
+            fyersSymbol=d.get("fyersSymbol") or f"NSE:{d.get('symbol', '').upper()}-EQ",
+            fyersUrl=d.get("fyersUrl") or f"https://fyers.in/web/symbol/NSE:{d.get('symbol', '').upper()}-EQ",
+            side=str(d.get("side", "buy")).lower(),
+            qty=int(d.get("qty", 1)),
+            entryPrice=float(d.get("entryPrice", 0.0)),
+            stopLoss=float(d.get("stopLoss", 0.0)),
+            strategy=d.get("strategy"),
+            time=d.get("placedAt") or datetime.now(timezone.utc),
+            status=d.get("status", "triggered"),
+            message=d.get("message") or f"{str(d.get('side', 'buy')).upper()} {d.get('symbol', '')}",
+            read=bool(d.get("read", False)),
+        ))
+    return out
+
+
+@router.post("/trades/notifications/mark-read")
+async def mark_trade_notifications_read(
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    db = get_db()
+    user_ids = [current_user["_id"], str(current_user["_id"])]
+    if ObjectId.is_valid(str(current_user["_id"])):
+        user_ids.append(ObjectId(str(current_user["_id"])))
+    await db.trade_notifications.update_many(
+        {"userId": {"$in": user_ids}},
+        {"$set": {"read": True}},
+    )
+    return {"status": "ok"}

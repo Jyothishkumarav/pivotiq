@@ -3,13 +3,14 @@ import { View } from "react-native";
 import { colors, radius, spacing } from "@/theme/tokens";
 import { Text } from "./Text";
 
-type Tone = "positive" | "negative" | "warning" | "neutral";
+type Tone = "positive" | "negative" | "warning" | "neutral" | "accent";
 
 const toneColors: Record<Tone, { bg: string; fg: string }> = {
   positive: { bg: colors.positiveBg, fg: colors.positiveText },
   negative: { bg: colors.negativeBg, fg: colors.negative },
   warning: { bg: colors.warningBg, fg: colors.warning },
   neutral: { bg: colors.accentMuted, fg: colors.accent },
+  accent: { bg: colors.accentMuted, fg: colors.accent },
 };
 
 export function Badge({ label, tone = "neutral" }: { label: string; tone?: Tone }) {

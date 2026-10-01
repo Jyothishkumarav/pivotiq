@@ -9,8 +9,9 @@ a symbol+strategy+date+action was already triggered for a fixed TTL window.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
+import os
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -59,7 +60,7 @@ def get_user_enabled_strategies(user_id: Any | None = None) -> set[str]:
 
 
 DEFAULT_STRATEGY_CHANNELS: dict[str, str] = {
-    "orb_flow": "-1004449069761",
+    "breakout_support": "-1004449069761",
     "orb_pullback_support": "-1004440440854",
     "orb_pullback": "-1004294022390",
 }
@@ -699,5 +700,137 @@ def notify_support_candle_formed(
             cache.set_json(cache_key, {"sent": True}, ttl_seconds=_TRIGGER_CACHE_TTL_SECONDS)
     except Exception as exc:
         logger.warning("Could not send support candle formed alert for %s: %s", snapshot.symbol, exc)
+
+
+def notify_trade_execution(
+    symbol: str,
+    side: str,
+    qty: int,
+    entry_price: float,
+    stop_loss: float,
+    strategy: str | None = None,
+    broker: str = "Paper",
+    user_id: Any | None = None,
+    placed_at: datetime | None = None,
+    is_test: bool = False,
+) -> bool:
+    """Send immediate trade execution alert with direct Fyers Web link to the user's
+    configured Telegram channel (default: FyersTrade -1003999053085)."""
+    settings = get_settings()
+
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled and not is_test:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    risk_per_share = abs(entry_price - stop_loss)
+    total_risk = risk_per_share * qty
+
+    exec_time = placed_at or datetime.now(_IST)
+    if exec_time.tzinfo is None:
+        exec_time = exec_time.replace(tzinfo=timezone.utc)
+    time_str = exec_time.astimezone(_IST).strftime("%I:%M:%S %p")
+
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    strat_label = STRATEGY_SHORT_NAMES.get(strategy or "", (strategy or "Intraday MIS").upper())
+
+    test_prefix = "⚠️ <b>[TEST ALERT]</b>\n" if is_test else ""
+    title = f"{'⚠️ [TEST] ' if is_test else ''}⚡ FYERS TRADE: {action_label} {clean_symbol}"
+
+    lines = [
+        f"{test_prefix}⚡ <b>FYERS TRADE ENTRY — {clean_symbol}</b>",
+        f"────────────────────────────",
+        f"📊 <b>Action:</b> {action_emoji} <b>{action_label}</b>",
+        f"🏷️ <b>Symbol:</b> <code>{fyers_symbol}</code>",
+        f"📦 <b>Quantity:</b> <b>{qty}</b> shares",
+        f"💵 <b>Entry Price (CMP):</b> <b>₹{entry_price:,.2f}</b>",
+        f"🛑 <b>Stop Loss:</b> <b>₹{stop_loss:,.2f}</b> (Risk: ₹{risk_per_share:,.2f}/sh)",
+        f"🛡️ <b>Total Risk:</b> ₹{total_risk:,.2f}",
+        f"⏱️ <b>Time:</b> {time_str} IST",
+        f"📈 <b>Strategy:</b> {strat_label}",
+        f"🏦 <b>Execution:</b> {broker}",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">CLICK HERE TO PLACE ORDER ON FYERS WEB</a></b>",
+        f"🔗 <a href=\"https://www.tradingview.com/chart/?symbol={fyers_symbol}\">TradingView Chart</a>",
+    ]
+    message_text = "\n".join(lines)
+
+    # 1. Dispatch via notification-service
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"trade-{clean_symbol}-{action_label.lower()}-{int(datetime.now().timestamp())}",
+            "metadata": {
+                "source": "pivotiq-trade-execution",
+                "symbol": clean_symbol,
+                "side": action_label.lower(),
+                "qty": qty,
+                "entryPrice": entry_price,
+                "stopLoss": stop_loss,
+                "fyersUrl": fyers_url,
+            },
+        }
+        res = requests.post(
+            f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications",
+            json=payload,
+            timeout=4,
+        )
+        if res.ok:
+            sent = True
+    except Exception as exc:
+        logger.warning("Could not dispatch trade notification via service: %s", exc)
+
+    # 2. Robust direct fallback if notification-service was not reachable or failed
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                full_text = f"<b>{title}</b>\n\n{message_text}"
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": channel_id,
+                        "text": full_text,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=5,
+                )
+                sent = True
+            except Exception as exc:
+                logger.warning("Direct telegram fallback failed for trade %s: %s", clean_symbol, exc)
+
+    return sent
 
 

@@ -43,12 +43,11 @@ const COLUMN_HEADERS: {
   { key: "symbol", label: "Setup", flex: 0.7, minWidth: 75, align: "flex-end", sortable: false },
   { key: "symbol", label: "Entry", flex: 0.9, minWidth: 85, align: "flex-end", sortable: false },
   { key: "symbol", label: "Stop Loss", flex: 1.45, minWidth: 145, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Status", flex: 0.95, minWidth: 90, align: "flex-end", sortable: false },
+  { key: "symbol", label: "Status", flex: 1.35, minWidth: 130, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ Entry", flex: 0.9, minWidth: 90, align: "flex-end", sortable: false },
   { key: "symbol", label: "Δ SL", flex: 0.95, minWidth: 95, align: "flex-end", sortable: false },
   { key: "symbol", label: "Max Run", flex: 0.85, minWidth: 85, align: "flex-end", sortable: false },
   { key: "symbol", label: "Time", flex: 0.7, minWidth: 68, align: "flex-end", sortable: false },
-  { key: "symbol", label: "Live Trade", flex: 0.95, minWidth: 95, align: "flex-end", sortable: false },
 ];
 
 /** Column value extractors. `null` values are always pushed to the end regardless of direction. */
@@ -84,12 +83,13 @@ const INTRADAY_LEGEND: { glyph: string; color: string; label: string }[] = [
 ];
 
 const STRATEGY_OPTIONS: { value: string; label: string; icon: string; shortLabel: string }[] = [
-  { value: "orb_flow",            label: "ORB Institutional Flow", icon: "⚡", shortLabel: "Flow" },
-  { value: "orb_pullback_support",label: "ORB + Pullback Support",icon: "🎯", shortLabel: "Support" },
+  { value: "breakout_support",    label: "Breakout Support",       icon: "🎯", shortLabel: "Breakout" },
+  { value: "orb_pullback_support",label: "ORB + Pullback Support",icon: "⚡", shortLabel: "Support" },
   { value: "orb_pullback",        label: "ORB + VWAP Pullback",   icon: "🔄", shortLabel: "Pullback" },
 ];
 
 const STRATEGY_COLORS: Record<string, { accent: string; glow: string; bg: string }> = {
+  breakout_support:     { accent: "#7B61FF",        glow: "rgba(123,97,255,0.25)",  bg: "rgba(123,97,255,0.10)" },
   orb_flow:             { accent: "#7B61FF",        glow: "rgba(123,97,255,0.25)",  bg: "rgba(123,97,255,0.10)" },
   orb_vwap:             { accent: colors.accent,   glow: "rgba(91,139,255,0.25)",  bg: "rgba(91,139,255,0.10)" },
   context_gated:        { accent: "#9AA9C7",        glow: "rgba(154,169,199,0.20)", bg: "rgba(154,169,199,0.08)" },
@@ -235,11 +235,13 @@ function OrbPullbackControls({
   onEntryModeChange,
   includeFirstCandle,
   onIncludeFirstCandleChange,
+  showFirstCandleToggle = true,
 }: {
   entryMode: "close" | "touch";
   onEntryModeChange: (mode: "close" | "touch") => void;
   includeFirstCandle: boolean;
   onIncludeFirstCandleChange: (val: boolean) => void;
+  showFirstCandleToggle?: boolean;
 }) {
   return (
     <View style={{ gap: 4, marginTop: 6 }}>
@@ -329,91 +331,114 @@ function OrbPullbackControls({
           </View>
         </View>
 
-        {/* 9:15 Candle Toggle */}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 0 }}>
-          <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            9:15 Candle:
-          </Text>
+        {/* 9:15 Candle Toggle - only shown when showFirstCandleToggle is true */}
+        {showFirstCandleToggle ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 0 }}>
+            <Text variant="caption" tone="secondary" style={{ fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              9:15 Candle:
+            </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                backgroundColor: colors.surfaceElevated,
+                borderRadius: 8,
+                padding: 3,
+                borderWidth: 1,
+                borderColor: colors.borderSubtle,
+                gap: 4,
+              }}
+            >
+              <Pressable
+                onPress={() => onIncludeFirstCandleChange(false)}
+                style={({ hovered }: any) => ({
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: 6,
+                  borderRadius: 6,
+                  backgroundColor:
+                    !includeFirstCandle
+                      ? colors.accent
+                      : hovered
+                        ? colors.surfaceHover
+                        : "transparent",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                })}
+              >
+                <Text
+                  variant="caption"
+                  style={{
+                    fontWeight: "700",
+                    color: !includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
+                    fontSize: 12,
+                  }}
+                >
+                  🚫 Ignore (Matches ORB+VWAP)
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => onIncludeFirstCandleChange(true)}
+                style={({ hovered }: any) => ({
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: 6,
+                  borderRadius: 6,
+                  backgroundColor:
+                    includeFirstCandle
+                      ? colors.accent
+                      : hovered
+                        ? colors.surfaceHover
+                        : "transparent",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                })}
+              >
+                <Text
+                  variant="caption"
+                  style={{
+                    fontWeight: "700",
+                    color: includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
+                    fontSize: 12,
+                  }}
+                >
+                  ✅ Include First Candle
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
           <View
             style={{
               flexDirection: "row",
               alignItems: "center",
-              backgroundColor: colors.surfaceElevated,
-              borderRadius: 8,
-              padding: 3,
+              gap: 6,
+              paddingHorizontal: spacing.md,
+              paddingVertical: 6,
+              borderRadius: 6,
+              backgroundColor: "rgba(123,97,255,0.08)",
               borderWidth: 1,
-              borderColor: colors.borderSubtle,
-              gap: 4,
+              borderColor: "rgba(123,97,255,0.20)",
             }}
           >
-            <Pressable
-              onPress={() => onIncludeFirstCandleChange(false)}
-              style={({ hovered }: any) => ({
-                paddingHorizontal: spacing.md,
-                paddingVertical: 6,
-                borderRadius: 6,
-                backgroundColor:
-                  !includeFirstCandle
-                    ? colors.accent
-                    : hovered
-                      ? colors.surfaceHover
-                      : "transparent",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              })}
-            >
-              <Text
-                variant="caption"
-                style={{
-                  fontWeight: "700",
-                  color: !includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
-                  fontSize: 12,
-                }}
-              >
-                🚫 Ignore (Matches ORB+VWAP)
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => onIncludeFirstCandleChange(true)}
-              style={({ hovered }: any) => ({
-                paddingHorizontal: spacing.md,
-                paddingVertical: 6,
-                borderRadius: 6,
-                backgroundColor:
-                  includeFirstCandle
-                    ? colors.accent
-                    : hovered
-                      ? colors.surfaceHover
-                      : "transparent",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              })}
-            >
-              <Text
-                variant="caption"
-                style={{
-                  fontWeight: "700",
-                  color: includeFirstCandle ? "#FFFFFF" : colors.textSecondary,
-                  fontSize: 12,
-                }}
-              >
-                ✅ Include First Candle
-              </Text>
-            </Pressable>
+            <Text style={{ fontSize: 12 }}>🎯</Text>
+            <Text variant="caption" style={{ color: "#B8A7FF", fontWeight: "600", fontSize: 11 }}>
+              First Candle Always Included · Dynamic Reversal (Opposite ORB Close)
+            </Text>
           </View>
-        </View>
+        )}
       </View>
 
       <Text variant="caption" tone="muted" style={{ fontSize: 11, lineHeight: 14 }}>
         {entryMode === "close"
           ? "3 Min Candle: Confirms entry only after 3m candle closes beyond supporting candle."
           : "Latest Price: Triggers entry immediately on live price / wick breach."}{" "}
-        {!includeFirstCandle
-          ? "9:15 auction spike ignored to determine heights (matches ORB + VWAP)."
-          : "9:15 opening candle high/low included in ORB calculation."}
+        {showFirstCandleToggle
+          ? (!includeFirstCandle
+            ? "9:15 auction spike ignored to determine heights (matches ORB + VWAP)."
+            : "9:15 opening candle high/low included in ORB calculation.")
+          : "Reversal is confirmed on 3m candle close beyond opposite ORB boundary."}
       </Text>
     </View>
   );
@@ -662,7 +687,7 @@ function SortableHeader({ state, onChange }: { state: SortState; onChange: (next
           </Pressable>
         );
       })}
-      <View style={{ width: 42 }} />
+      <View style={{ width: 36, flexShrink: 0 }} />
     </View>
   );
 }
@@ -858,6 +883,15 @@ export default function WatchlistDetailScreen() {
             onChange={(next) => strategyMutation.mutate(next)}
             loading={strategyMutation.isPending}
           />
+          {strategy === "breakout_support" && (
+            <OrbPullbackControls
+              entryMode={entryMode}
+              onEntryModeChange={handleEntryModeChange}
+              includeFirstCandle={true}
+              onIncludeFirstCandleChange={() => {}}
+              showFirstCandleToggle={false}
+            />
+          )}
           {strategy === "orb_pullback_support" && (
             <OrbPullbackControls
               entryMode={entryMode}
@@ -865,30 +899,6 @@ export default function WatchlistDetailScreen() {
               includeFirstCandle={includeFirstCandle}
               onIncludeFirstCandleChange={handleIncludeFirstCandleChange}
             />
-          )}
-          {strategy === "orb_flow" && (
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: spacing.sm,
-                paddingHorizontal: spacing.md,
-                paddingVertical: 7,
-                borderRadius: 8,
-                backgroundColor: "rgba(123,97,255,0.08)",
-                borderWidth: 1,
-                borderColor: "rgba(123,97,255,0.22)",
-                marginTop: 4,
-              }}
-            >
-              <Text style={{ fontSize: 13 }}>⚡</Text>
-              <Text variant="caption" style={{ color: "#B8A7FF", fontWeight: "700" }}>
-                Institutional Flow:
-              </Text>
-              <Text variant="caption" tone="secondary">
-                3m Close Confirmation · Morning Window (≤ 10:30 IST) · Dynamic Confluence Sizing (1.0R / 0.5R)
-              </Text>
-            </View>
           )}
           <DateSelector
             value={retestDate}
@@ -992,7 +1002,7 @@ export default function WatchlistDetailScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ minWidth: 1260, width: "100%" }}
+        contentContainerStyle={{ minWidth: 1100, width: "100%" }}
       >
         <View style={{ width: "100%", gap: spacing.xs }}>
           <IntradayLegend visible={Object.values(intradayMap).some((s) => s != null)} />
@@ -1047,7 +1057,7 @@ export default function WatchlistDetailScreen() {
                     Watchlist Stocks ({watchlist.items.length})
                   </Text>
                   <Text variant="caption" tone="secondary" style={{ fontSize: 11 }}>
-                    · {watchlist.items.filter((i) => i.autoTrade).length} armed for Live Broker (Paper default on all)
+                    · Assisted Fyers order alerts enabled
                   </Text>
                 </View>
                 <View style={{ flex: 1, height: 1, backgroundColor: colors.borderSubtle, marginLeft: spacing.md }} />

@@ -20,7 +20,7 @@ BROKER_REGISTRY: dict[str, str] = {
 
 async def get_broker(
     broker_name: str,
-    user_id: ObjectId,
+    user_id: ObjectId | str,
     db: AsyncIOMotorDatabase,
     access_token: str | None = None,
 ) -> BaseBroker:

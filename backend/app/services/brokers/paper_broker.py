@@ -254,6 +254,7 @@ class PaperBroker(BaseBroker):
                 "executedAt": now,
                 "orderId": order_id,
                 "purpose": req.purpose.value,
+                "strategy": req.strategy,
             }
             await self.db.paper_trades.insert_one(trade_doc)
 
@@ -442,6 +443,7 @@ class PaperBroker(BaseBroker):
                             "executedAt": exec_time,
                             "orderId": str(sl["_id"]),
                             "purpose": purpose,
+                            "strategy": sl.get("strategy"),
                         }
                     )
 

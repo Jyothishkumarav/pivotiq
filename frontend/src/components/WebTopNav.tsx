@@ -6,6 +6,7 @@ import { Text } from "@/components/ui";
 import { fyersApi } from "@/api/fyers";
 import { useAuthStore } from "@/store/authStore";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
+import { TradeNotificationBell } from "./TradeNotificationBell";
 
 interface NavItem {
   href: "/search" | "/watchlists" | "/alerts" | "/portfolio";
@@ -77,6 +78,9 @@ function UserMenu() {
 
   return (
     <View style={styles.userSection}>
+      {/* Real-time Trade Alerts & Fyers Placement Bell */}
+      <TradeNotificationBell />
+
       {/* Settings Navigation Shortcut */}
       <Pressable
         onPress={() => router.push("/settings")}

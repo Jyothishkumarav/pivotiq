@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _IST = ZoneInfo("Asia/Kolkata")
 _MARKET_OPEN_TIME = dt_time(9, 8)
 _MARKET_CLOSE_TIME = dt_time(15, 35)
-_CYCLE_INTERVAL_SECS = 4.0
+_CYCLE_INTERVAL_SECS = 10.0
 _SNAPSHOT_CACHE_TTL = 30  # 30 seconds TTL for fast cache
 
 
@@ -237,7 +237,7 @@ class WatchlistProcessor:
                     self._watchlist_meta[wid] = {
                         "userId": u_id_str,
                         "symbols": [i["symbol"].upper() for i in raw_items if "symbol" in i],
-                        "strategy": wl_doc.get("strategy", "orb_pullback_support"),
+                        "strategy": "breakout_support" if wl_doc.get("strategy") == "orb_flow" else wl_doc.get("strategy", "breakout_support"),
                         "entryMode": entry_mode,
                         "slBufferPct": sl_buffer,
                         "autoTrades": {i["symbol"].upper(): bool(i.get("autoTrade", False)) for i in raw_items if "symbol" in i},
@@ -265,7 +265,7 @@ class WatchlistProcessor:
             logger.debug("No active Fyers token for user %s; skipping live processor evaluation", user_id_str)
             return
 
-        strategy = meta.get("strategy", "orb_pullback_support")
+        strategy = meta.get("strategy", "breakout_support")
         entry_mode = meta.get("entryMode", "close")
         sl_buffer_pct = float(meta.get("slBufferPct", 25.0))
         symbols = list(meta["symbols"])
@@ -332,12 +332,13 @@ class WatchlistProcessor:
                 asyncio.create_task(asyncio.to_thread(notify_support_candle_formed, snap, user_id_obj, index_snaps))
 
             # Stage 5: Triggered Entry (Alert + Dual Execution)
-            if setup.status == "triggered":
-                asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id_obj, index_snaps))
+            if setup.triggeredAt is not None:
+                if setup.status == "triggered":
+                    asyncio.create_task(asyncio.to_thread(notify_trade_setup_triggered, snap, user_id_obj, index_snaps))
                 asyncio.create_task(trigger_autotrade_if_enabled(snap, user_id_obj, db))
 
             # Stop Loss Hit
-            elif setup.status == "sl_hit":
+            if setup.status == "sl_hit":
                 asyncio.create_task(asyncio.to_thread(notify_stop_loss_hit, snap, user_id_obj, index_snaps))
 
     # -------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   Segment,
   Side,
   Trade,
+  TradeNotification,
   TradeSizingResult,
 } from "@/types";
 
@@ -85,4 +86,6 @@ export const tradingApi = {
     }),
   exitPosition: (payload: ExitPositionPayload) => apiClient.post<BrokerOrder>("/trades/positions/exit", payload),
   resetPaperAccount: () => apiClient.post<{ status: string; message: string }>("/trades/paper/reset"),
+  getTradeNotifications: () => apiClient.get<TradeNotification[]>("/trades/notifications"),
+  markNotificationsRead: () => apiClient.post<{ status: string }>("/trades/notifications/mark-read"),
 };

@@ -19,7 +19,7 @@ import {
   Screen,
   Text,
 } from "@/components/ui";
-import { settingsApi, TradingSettingsResponse, WatchlistOption } from "@/api/settings";
+import { settingsApi, TelegramChannelOption, TradingSettingsResponse, TradingSettingsUpdate, WatchlistOption } from "@/api/settings";
 import { colors, layout, radius, spacing, typography } from "@/theme/tokens";
 import { formatCurrency } from "@/utils/format";
 
@@ -45,6 +45,12 @@ export default function SettingsScreen() {
   const [entryMode, setEntryMode] = useState<"close" | "touch">("close");
   const [swingSlEnabled, setSwingSlEnabled] = useState<boolean>(false);
   const [swingSlBuffer, setSwingSlBuffer] = useState<string>("1");
+  const [tradeTelegramAlertsEnabled, setTradeTelegramAlertsEnabled] = useState<boolean>(true);
+  const [tradeTelegramChannelId, setTradeTelegramChannelId] = useState<string>("-1003999053085");
+  const [tradeTelegramChannelName, setTradeTelegramChannelName] = useState<string>("FyersTrade");
+  const [customTelegramMode, setCustomTelegramMode] = useState<boolean>(false);
+  const [testSending, setTestSending] = useState<boolean>(false);
+  const [testStatus, setTestStatus] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
   useEffect(() => {
@@ -59,18 +65,14 @@ export default function SettingsScreen() {
       }
       setSwingSlEnabled(Boolean(data.swingSlEnabled));
       setSwingSlBuffer(String(data.swingSlBufferPct ?? 1));
+      setTradeTelegramAlertsEnabled(data.tradeTelegramAlertsEnabled ?? true);
+      setTradeTelegramChannelId(data.tradeTelegramChannelId || "-1003999053085");
+      setTradeTelegramChannelName(data.tradeTelegramChannelName || "FyersTrade");
     }
   }, [data]);
 
   const updateMutation = useMutation({
-    mutationFn: (payload: {
-      paperCapital: number;
-      slBufferPct: number;
-      maxRiskPerTrade: number;
-      maxOpenPositions: number;
-      activeWatchlistId: string | null;
-      entryMode: "close" | "touch";
-    }) => settingsApi.updateTradingSettings(payload),
+    mutationFn: (payload: TradingSettingsUpdate) => settingsApi.updateTradingSettings(payload),
     onSuccess: (updated) => {
       queryClient.setQueryData(["trading-settings"], updated);
       queryClient.invalidateQueries({ queryKey: ["broker-funds"] });
@@ -119,6 +121,9 @@ export default function SettingsScreen() {
       entryMode,
       swingSlEnabled,
       swingSlBufferPct: Math.max(0, Number(swingSlBuffer) || 1),
+      tradeTelegramChannelId,
+      tradeTelegramChannelName,
+      tradeTelegramAlertsEnabled,
     });
   };
 
@@ -131,6 +136,27 @@ export default function SettingsScreen() {
     setEntryMode("close");
     setSwingSlEnabled(false);
     setSwingSlBuffer("1");
+    setTradeTelegramAlertsEnabled(true);
+    setTradeTelegramChannelId("-1003999053085");
+    setTradeTelegramChannelName("FyersTrade");
+  };
+
+  const handleTestAlert = async () => {
+    setTestSending(true);
+    setTestStatus(null);
+    try {
+      const res = await settingsApi.testTradeTelegramAlert();
+      if (res.ok) {
+        setTestStatus(`✓ Test alert sent to ${tradeTelegramChannelName || "Telegram channel"}!`);
+      } else {
+        setTestStatus(`⚠️ ${res.message || "Failed to send alert"}`);
+      }
+    } catch (e: any) {
+      setTestStatus(`⚠️ ${e?.message || "Failed to send test alert"}`);
+    } finally {
+      setTestSending(false);
+      setTimeout(() => setTestStatus(null), 5000);
+    }
   };
 
   const watchlists: WatchlistOption[] = data?.availableWatchlists || [];
@@ -582,6 +608,170 @@ export default function SettingsScreen() {
                   Triggers immediately as soon as the live price tick (LTP) touches or crosses the support trigger level. Fast execution without waiting for candle close.
                 </Text>
               </Pressable>
+            </View>
+          </Card>
+
+          {/* 3C. FYERS TRADE TELEGRAM NOTIFICATIONS */}
+          <Card elevated style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={{ gap: 2, flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                  <Text variant="title" style={{ fontSize: 18 }}>✈️ Fyers Trade Telegram Alerts</Text>
+                  <Badge
+                    label={tradeTelegramAlertsEnabled ? "Active" : "Disabled"}
+                    tone={tradeTelegramAlertsEnabled ? "positive" : "neutral"}
+                  />
+                </View>
+                <Text variant="caption" tone="secondary">
+                  Whenever a paper trade triggers, immediately dispatches an alert with Symbol, Action (BUY/SELL), Quantity, CMP, Stop-Loss, and a direct 1-click Fyers Web order link.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Text variant="caption" tone="muted">
+                  {tradeTelegramAlertsEnabled ? "Enabled" : "Disabled"}
+                </Text>
+                <Switch
+                  value={tradeTelegramAlertsEnabled}
+                  onValueChange={setTradeTelegramAlertsEnabled}
+                  trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                  thumbColor="#ffffff"
+                />
+              </View>
+            </View>
+
+            {/* Channel Options */}
+            <View style={{ gap: spacing.sm }}>
+              <Text variant="caption" tone="muted" style={{ fontWeight: "700" }}>
+                Select Telegram Destination Channel:
+              </Text>
+              <View style={styles.watchlistsGrid}>
+                {(data?.availableTelegramChannels || [
+                  { id: "-1003999053085", name: "FyersTrade" },
+                  { id: "-1004449069761", name: "Pivotiq_Tuned" },
+                  { id: "-1004294022390", name: "PivotIQ_15_Mins_Break" },
+                  { id: "-1004440440854", name: "Pivotiqupdate" },
+                ]).map((ch) => {
+                  const isSelected = !customTelegramMode && tradeTelegramChannelId === ch.id;
+                  return (
+                    <Pressable
+                      key={ch.id}
+                      onPress={() => {
+                        setCustomTelegramMode(false);
+                        setTradeTelegramChannelId(ch.id);
+                        setTradeTelegramChannelName(ch.name);
+                      }}
+                      style={({ hovered }: any) => [
+                        styles.watchlistOptionCard,
+                        isSelected && styles.watchlistOptionCardActive,
+                        hovered && !isSelected && styles.watchlistOptionCardHovered,
+                      ]}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                          <Text
+                            variant="subtitle"
+                            style={{
+                              color: isSelected ? colors.accent : colors.textPrimary,
+                              fontWeight: isSelected ? "700" : "600",
+                            }}
+                          >
+                            📢 {ch.name}
+                          </Text>
+                          {ch.id === "-1003999053085" && (
+                            <Badge label="Recommended for Fyers" tone="positive" />
+                          )}
+                        </View>
+                        <Badge label={ch.id} tone={isSelected ? "positive" : "neutral"} />
+                      </View>
+                      <Text variant="caption" tone="secondary">
+                        {ch.id === "-1003999053085"
+                          ? "Dedicated group for instant assisted Fyers web order execution links."
+                          : "Trade alerts will be posted into this channel."}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+
+                {/* Custom Channel Mode */}
+                <Pressable
+                  onPress={() => setCustomTelegramMode(true)}
+                  style={({ hovered }: any) => [
+                    styles.watchlistOptionCard,
+                    customTelegramMode && styles.watchlistOptionCardActive,
+                    hovered && !customTelegramMode && styles.watchlistOptionCardHovered,
+                  ]}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text
+                      variant="subtitle"
+                      style={{
+                        color: customTelegramMode ? colors.accent : colors.textPrimary,
+                        fontWeight: customTelegramMode ? "700" : "600",
+                      }}
+                    >
+                      ⚙️ Custom Telegram Chat / Channel ID
+                    </Text>
+                    {customTelegramMode && <Badge label="Custom" tone="accent" />}
+                  </View>
+                  <Text variant="caption" tone="secondary">
+                    Specify any other Telegram chat or channel ID where your bot is added.
+                  </Text>
+                </Pressable>
+
+                {customTelegramMode && (
+                  <View style={{ gap: spacing.xs, marginTop: spacing.xs }}>
+                    <Input
+                      label="Custom Chat ID (e.g. -100xxxxxxxxxx)"
+                      value={tradeTelegramChannelId}
+                      onChangeText={(val) => {
+                        setTradeTelegramChannelId(val);
+                        setTradeTelegramChannelName(val);
+                      }}
+                      placeholder="-1003999053085"
+                    />
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Test Alert Button & Status */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: spacing.md,
+                paddingTop: spacing.sm,
+                borderTopWidth: 1,
+                borderTopColor: colors.borderSubtle,
+              }}
+            >
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text variant="caption" tone="secondary">
+                  Target Channel: <Text variant="caption" style={{ fontWeight: "700", color: colors.textPrimary }}>{tradeTelegramChannelName || "Custom"}</Text> ({tradeTelegramChannelId})
+                </Text>
+                {testStatus && (
+                  <Text
+                    variant="caption"
+                    style={{
+                      color: testStatus.startsWith("✓") ? colors.positive : colors.warning,
+                      fontWeight: "700",
+                    }}
+                  >
+                    {testStatus}
+                  </Text>
+                )}
+              </View>
+
+              <Button
+                label={testSending ? "Sending…" : "Send Test Trade Alert 🚀"}
+                variant="secondary"
+                size="sm"
+                onPress={handleTestAlert}
+                loading={testSending}
+              />
             </View>
           </Card>
 

@@ -513,6 +513,47 @@ async def execute_order_with_sl(
         }
         await db.order_chains.insert_one(chain_doc)
 
+        fyers_symbol = f"NSE:{symbol.upper()}-EQ"
+        fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+        notif_doc = {
+            "userId": user_id,
+            "symbol": symbol.upper(),
+            "fyersSymbol": fyers_symbol,
+            "fyersUrl": fyers_url,
+            "side": side.lower(),
+            "qty": order_qty,
+            "entryPrice": stock_price,
+            "stopLoss": sizing.bufferedSl,
+            "strategy": strategy,
+            "placedAt": exec_time,
+            "createdAt": datetime.now(timezone.utc),
+            "read": False,
+            "broker": broker.broker_name,
+            "message": f"{side.upper()} {order_qty} {symbol.upper()} @ ₹{stock_price:.2f} | SL ₹{sizing.bufferedSl:.2f}",
+        }
+        await db.trade_notifications.insert_one(notif_doc)
+
+        # Dispatch trade alert to Telegram channel (e.g. FyersTrade) non-blockingly
+        try:
+            import asyncio
+            from app.services.notification_client import notify_trade_execution
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(
+                None,
+                notify_trade_execution,
+                symbol.upper(),
+                side.lower(),
+                order_qty,
+                stock_price,
+                sizing.bufferedSl,
+                strategy,
+                broker.broker_name,
+                user_id,
+                exec_time,
+            )
+        except Exception as notif_err:
+            logger.warning("Could not dispatch trade execution alert: %s", notif_err)
+
     action_label = "Buy" if is_buy else "Sell (Short)"
     return ExecuteOrderResult(
         buyOrder=entry_res,
@@ -681,6 +722,7 @@ async def trigger_autotrade_if_enabled(
         existing_paper = await db.paper_orders.find_one({
             "userId": {"$in": user_ids},
             "symbol": sym_upper,
+            "strategy": strategy_name,
             "purpose": "entry",
             "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
         })
@@ -698,6 +740,7 @@ async def trigger_autotrade_if_enabled(
                 _existing = await db.paper_orders.find_one({
                     "userId": {"$in": user_ids},
                     "symbol": sym_upper,
+                    "strategy": strategy_name,
                     "purpose": "entry",
                     "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
                 })
@@ -792,6 +835,7 @@ async def trigger_autotrade_if_enabled(
             existing_chain = await db.order_chains.find_one({
                 "userId": {"$in": user_ids},
                 "symbol": sym_upper,
+                "strategy": strategy_name,
                 "broker": "fyers",
                 "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
             })
@@ -874,7 +918,7 @@ async def sync_watchlist_entered_trades(
         # Map symbol -> (is_live_trade, strategy)
         symbols_map: dict[str, dict] = {}
         for wl in watchlists:
-            strat = wl.get("strategy") or "orb_pullback_support"
+            strat = wl.get("strategy") or "breakout_support"
             for item in wl.get("items", []):
                 sym = str(item.get("symbol") or "").upper()
                 if not sym:
@@ -887,10 +931,13 @@ async def sync_watchlist_entered_trades(
         if not all_syms:
             return results
 
-        # Find triggers recorded for today for these symbols
+        active_strats = list({info["strategy"] for info in symbols_map.values()})
+
+        # Find triggers recorded for today for these symbols matching active strategies
         triggers = await db.intraday_triggers.find({
             "date": date_str,
             "symbol": {"$in": all_syms},
+            "strategy": {"$in": active_strats},
             "action": {"$in": ["buy", "sell"]},
         }).sort("triggeredAt", 1).to_list(200)
 
@@ -961,12 +1008,14 @@ async def sync_watchlist_entered_trades(
                 existing_paper = await db.paper_orders.find_one({
                     "userId": {"$in": user_ids},
                     "symbol": sym,
+                    "strategy": strat,
                     "purpose": "entry",
                     "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
                 })
                 existing_trade = await db.paper_trades.find_one({
                     "userId": {"$in": user_ids},
                     "symbol": sym,
+                    "strategy": strat,
                     "purpose": "entry",
                     "executedAt": {"$gte": start_of_day, "$lte": end_of_day},
                 })
@@ -1006,6 +1055,7 @@ async def sync_watchlist_entered_trades(
                     existing_chain = await db.order_chains.find_one({
                         "userId": {"$in": user_ids},
                         "symbol": sym,
+                        "strategy": strat,
                         "broker": "fyers",
                         "placedAt": {"$gte": start_of_day, "$lte": end_of_day},
                     })

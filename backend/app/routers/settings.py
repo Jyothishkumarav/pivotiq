@@ -25,19 +25,20 @@ from app.services.strategies import STRATEGY_NAMES
 from app.services.watchlist_processor import watchlist_processor
 
 AVAILABLE_TELEGRAM_CHANNELS: list[TelegramChannelOption] = [
+    TelegramChannelOption(id="-1003999053085", name="FyersTrade"),
     TelegramChannelOption(id="-1004449069761", name="Pivotiq_Tuned"),
     TelegramChannelOption(id="-1004294022390", name="PivotIQ_15_Mins_Break"),
     TelegramChannelOption(id="-1004440440854", name="Pivotiqupdate"),
 ]
 
 DEFAULT_STRATEGY_CHANNELS: dict[str, str] = {
-    "orb_flow": "-1004449069761",
+    "breakout_support": "-1004449069761",
     "orb_pullback_support": "-1004440440854",
     "orb_pullback": "-1004294022390",
 }
 
 DEFAULT_STRATEGY_CHANNEL_NAMES: dict[str, str] = {
-    "orb_flow": "Pivotiq_Tuned",
+    "breakout_support": "Pivotiq_Tuned",
     "orb_pullback_support": "Pivotiqupdate",
     "orb_pullback": "PivotIQ_15_Mins_Break",
 }
@@ -409,6 +410,11 @@ class TradingSettingsResponse(BaseModel):
     # Swing SL settings
     swingSlEnabled: bool = False
     swingSlBufferPct: float = 1.0  # % added on top of detected swing level
+    # Telegram Trade Alerts settings
+    tradeTelegramChannelId: str | None = "-1003999053085"
+    tradeTelegramChannelName: str | None = "FyersTrade"
+    tradeTelegramAlertsEnabled: bool = True
+    availableTelegramChannels: list[TelegramChannelOption] = AVAILABLE_TELEGRAM_CHANNELS
 
 
 class TradingSettingsUpdate(BaseModel):
@@ -421,6 +427,10 @@ class TradingSettingsUpdate(BaseModel):
     # Swing SL settings
     swingSlEnabled: bool | None = None
     swingSlBufferPct: float | None = None
+    # Telegram Trade Alerts settings
+    tradeTelegramChannelId: str | None = None
+    tradeTelegramChannelName: str | None = None
+    tradeTelegramAlertsEnabled: bool | None = None
 
 
 @router.get("/trading", response_model=TradingSettingsResponse)
@@ -449,6 +459,10 @@ async def get_trading_settings(current_user: dict = Depends(get_current_user)) -
         availableWatchlists=wl_options,
         swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
         swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
+        tradeTelegramChannelId=str(cfg.get("tradeTelegramChannelId", "-1003999053085")),
+        tradeTelegramChannelName=str(cfg.get("tradeTelegramChannelName", "FyersTrade")),
+        tradeTelegramAlertsEnabled=bool(cfg.get("tradeTelegramAlertsEnabled", True)),
+        availableTelegramChannels=AVAILABLE_TELEGRAM_CHANNELS,
     )
 
 
@@ -479,6 +493,12 @@ async def update_trading_settings(
         cfg["swingSlEnabled"] = bool(payload.swingSlEnabled)
     if payload.swingSlBufferPct is not None:
         cfg["swingSlBufferPct"] = max(0.0, min(20.0, float(payload.swingSlBufferPct)))
+    if payload.tradeTelegramChannelId is not None:
+        cfg["tradeTelegramChannelId"] = payload.tradeTelegramChannelId.strip()
+    if payload.tradeTelegramChannelName is not None:
+        cfg["tradeTelegramChannelName"] = payload.tradeTelegramChannelName.strip()
+    if payload.tradeTelegramAlertsEnabled is not None:
+        cfg["tradeTelegramAlertsEnabled"] = bool(payload.tradeTelegramAlertsEnabled)
 
     now = datetime.now(timezone.utc)
     await db.user_settings.update_one(
@@ -506,5 +526,32 @@ async def update_trading_settings(
         availableWatchlists=wl_options,
         swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
         swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
+        tradeTelegramChannelId=str(cfg.get("tradeTelegramChannelId", "-1003999053085")),
+        tradeTelegramChannelName=str(cfg.get("tradeTelegramChannelName", "FyersTrade")),
+        tradeTelegramAlertsEnabled=bool(cfg.get("tradeTelegramAlertsEnabled", True)),
+        availableTelegramChannels=AVAILABLE_TELEGRAM_CHANNELS,
     )
+
+
+@router.post("/trading/test-telegram")
+async def test_trading_telegram_alert(current_user: dict = Depends(get_current_user)) -> dict:
+    from app.services.notification_client import notify_trade_execution
+    user_id = str(current_user["_id"])
+    success = notify_trade_execution(
+        symbol="HDFCBANK",
+        side="buy",
+        qty=10,
+        entry_price=1745.50,
+        stop_loss=1738.00,
+        strategy="orb_pullback_support",
+        broker="PivotIQ (Test Trade Alert)",
+        user_id=user_id,
+        is_test=True,
+    )
+    return {
+        "ok": success,
+        "message": "Test trade alert successfully sent to Telegram channel!"
+        if success
+        else "Failed to send test alert. Please check your Telegram channel configuration and bot permissions.",
+    }
 

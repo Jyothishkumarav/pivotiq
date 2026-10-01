@@ -286,6 +286,17 @@ class _TriggerStateCache:
             "include_first_candle": doc.get("includeFirstCandle", False),
         }
 
+    def invalidate(
+        self, symbol: str, today: str, strategy: str = "orb_vwap", entry_mode: str = "close", include_first_candle: bool = False,
+    ) -> None:
+        key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}"
+        with self._lock:
+            self._store.pop(key, None)
+        try:
+            _trigger_collection().delete_one(_strategy_filter(symbol, today, strategy, entry_mode, include_first_candle))
+        except Exception:
+            pass
+
     def freeze(
         self,
         symbol: str,
@@ -296,11 +307,12 @@ class _TriggerStateCache:
         entry_mode: str = "close",
         include_first_candle: bool = False,
         extra: dict[str, Any] | None = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}"
         with self._lock:
             state = self._store.get(key)
-            if state is not None and state["date"] == today:
+            if not overwrite and state is not None and state["date"] == today:
                 return state
 
         # First writer wins even across processes/threads — $setOnInsert only
@@ -309,7 +321,7 @@ class _TriggerStateCache:
         from app.services.market_data import is_index_symbol
         if is_index_symbol(symbol):
             # Benchmark indices are used for market bias, not saved as tradeable stock triggers
-            return {
+            state = {
                 "date": today, "triggered_at": triggered_at, "action": action, "sl_hit_at": None,
                 "entry": (extra or {}).get("entry"), "stop_loss": (extra or {}).get("stopLoss"),
                 "sl_wide": (extra or {}).get("slWide"),
@@ -318,6 +330,9 @@ class _TriggerStateCache:
                 "entry_mode": entry_mode,
                 "include_first_candle": include_first_candle,
             }
+            with self._lock:
+                self._store[key] = state
+            return state
 
         try:
             insert_fields = {
@@ -337,11 +352,18 @@ class _TriggerStateCache:
                 "entryMode": entry_mode,
                 "includeFirstCandle": include_first_candle,
             }
-            _trigger_collection().update_one(
-                query,
-                {"$setOnInsert": insert_fields},
-                upsert=True,
-            )
+            if overwrite:
+                _trigger_collection().update_one(
+                    query,
+                    {"$set": insert_fields, "$unset": {"slHitAt": ""}},
+                    upsert=True,
+                )
+            else:
+                _trigger_collection().update_one(
+                    query,
+                    {"$setOnInsert": insert_fields},
+                    upsert=True,
+                )
             doc = _trigger_collection().find_one(query)
         except Exception:
             logger.exception("failed to persist trigger state for %s — freezing in-memory only", symbol)
@@ -675,6 +697,8 @@ def compute_snapshot(
     the token has expired.
     """
     symbol = symbol.upper()
+    if strategy == "orb_flow":
+        strategy = "breakout_support"
     is_retest = bool(retest_date)
     cache_key = f"{symbol}:{strategy}:{entry_mode}:{int(include_first_candle)}:{sl_buffer_pct:.1f}:{retest_date or 'live'}"
     cached = _cache.get(cache_key)
@@ -749,7 +773,7 @@ def compute_snapshot(
     # If include_first_candle is True (only applicable to pluggable strategies like orb_pullback_support):
     # include opening candle in swing pool.
     # For orb_vwap, always skip the first candle to determine heights.
-    if include_first_candle and strategy != "orb_vwap":
+    if (include_first_candle or strategy == "breakout_support") and strategy != "orb_vwap":
         swing_pool = orb
     else:
         swing_pool = orb[1:] if len(orb) > 1 else orb
@@ -1166,12 +1190,12 @@ def _compute_pluggable_setup(
         setup.includeFirstCandle = include_first_candle
         return setup
 
-    if strategy == "orb_flow":
-        from app.services.strategies import orb_flow
+    if strategy == "breakout_support":
+        from app.services.strategies import breakout_support
 
-        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle) if not is_retest else None
-        idx_snaps = get_cached_index_snapshots(strategy=strategy, entry_mode=entry_mode) if not is_retest else None
-        setup, freeze_payload = orb_flow.compute_setup(
+        include_first_candle = True
+        frozen = _trigger_state.get(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=True) if not is_retest else None
+        setup, freeze_payload = breakout_support.compute_setup(
             symbol=symbol,
             candles_5m=candles_5m,
             monitor=monitor,
@@ -1186,62 +1210,66 @@ def _compute_pluggable_setup(
             frozen=frozen,
             setup_trend=setup_trend,
             gap_bias=gap_bias,
-            index_snapshots=idx_snaps,
             sl_buffer_pct=sl_buffer_pct,
         )
-        if not is_retest and frozen is None and freeze_payload is not None:
-            frozen = _trigger_state.freeze(
-                symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
-                strategy=strategy,
-                entry_mode=entry_mode,
-                include_first_candle=include_first_candle,
-                extra={
-                    "entry": freeze_payload["entry"],
-                    "stopLoss": freeze_payload["stop_loss"],
-                    "tightStop": freeze_payload.get("tight_stop"),
-                    "triggerPrice": freeze_payload["trigger_price"],
-                    "slWide": freeze_payload.get("sl_wide"),
-                    "indexConfluence": freeze_payload.get("index_confluence"),
-                    "sizingMultiplier": freeze_payload.get("sizing_multiplier"),
-                },
-            )
-            setup.triggeredAt = frozen["triggered_at"]
-            setup.status = "triggered"
-            setup.triggerPrice = frozen.get("trigger_price")
-            setup.tightStop = frozen.get("tight_stop", setup.tightStop)
-            setup.indexConfluence = frozen.get("index_confluence", setup.indexConfluence)
-            setup.sizingMultiplier = frozen.get("sizing_multiplier", setup.sizingMultiplier)
+
+        # Dynamic Reversal Synchronization:
+        # If the market reversed, any prior opposite-direction frozen state is invalidated
+        if frozen is not None and frozen["action"] != setup.action:
+            if not is_retest:
+                _trigger_state.invalidate(symbol, today, strategy=strategy, entry_mode=entry_mode, include_first_candle=True)
+            frozen = None
+
+        if not is_retest and freeze_payload is not None:
+            if frozen is None or frozen["action"] != freeze_payload["action"]:
+                frozen = _trigger_state.freeze(
+                    symbol, today, freeze_payload["triggered_at"], freeze_payload["action"],
+                    strategy=strategy,
+                    entry_mode=entry_mode,
+                    include_first_candle=True,
+                    extra={
+                        "entry": freeze_payload["entry"],
+                        "stopLoss": freeze_payload["stop_loss"],
+                        "tightStop": freeze_payload.get("tight_stop"),
+                        "triggerPrice": freeze_payload["trigger_price"],
+                        "slWide": freeze_payload.get("sl_wide"),
+                    },
+                    overwrite=True,
+                )
+                setup.triggeredAt = frozen["triggered_at"]
+                setup.status = "triggered"
+                setup.triggerPrice = frozen.get("trigger_price")
+                setup.tightStop = frozen.get("tight_stop", setup.tightStop)
         elif frozen is not None:
             setup.triggerPrice = frozen.get("trigger_price")
-            setup.indexConfluence = frozen.get("index_confluence", setup.indexConfluence)
-            setup.sizingMultiplier = frozen.get("sizing_multiplier", setup.sizingMultiplier)
 
         if setup.triggeredAt is not None:
             action = frozen["action"] if frozen is not None else setup.action
             sl_to_check = (
-                frozen.get("sl_wide")
-                if (frozen is not None and frozen.get("sl_wide") is not None)
-                else (setup.slWide if setup.slWide is not None else (frozen.get("stop_loss") if frozen is not None else setup.stopLoss))
+                frozen.get("stop_loss")
+                if (frozen is not None and frozen.get("stop_loss") is not None)
+                else setup.stopLoss
             )
-            msl_hit_at = orb_flow.check_sl_hit(
-                monitor, action, sl_to_check, setup.triggeredAt, trigger_bar_secs, entry_mode=entry_mode,
+            sl_hit_at = breakout_support.check_sl_hit(
+                monitor, action, sl_to_check, setup.triggeredAt, trigger_bar_secs,
+                entry_mode=entry_mode, current_price=current_price,
             )
-            if msl_hit_at is not None:
+            if sl_hit_at is not None:
                 if not is_retest:
-                    updated = _trigger_state.freeze_sl_hit(symbol, today, msl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=include_first_candle)
+                    updated = _trigger_state.freeze_sl_hit(symbol, today, sl_hit_at, strategy=strategy, entry_mode=entry_mode, include_first_candle=True)
                     if updated is not None:
-                        msl_hit_at = updated["sl_hit_at"]
-                setup.slHitAt = msl_hit_at
+                        sl_hit_at = updated["sl_hit_at"]
+                setup.slHitAt = sl_hit_at
                 setup.status = "sl_hit"
                 setup.stage = 6
                 setup.stageKey = "sl_hit"
                 setup.stageLabel = "SL Hit"
-                setup.stageDesc = f"Macro stop loss hit at {msl_hit_at.astimezone(IST).strftime('%H:%M')}."
+                setup.stageDesc = f"Stop loss hit at ₹{sl_to_check:.2f} ({sl_hit_at.astimezone(IST).strftime('%H:%M')} IST)."
             else:
                 if frozen is not None and frozen.get("sl_hit_at") is not None:
                     try:
                         _trigger_collection().update_one(
-                            _strategy_filter(symbol, today, strategy, entry_mode, include_first_candle),
+                            _strategy_filter(symbol, today, strategy, entry_mode, True),
                             {"$unset": {"slHitAt": ""}},
                         )
                         frozen["sl_hit_at"] = None
@@ -1249,7 +1277,7 @@ def _compute_pluggable_setup(
                         pass
                 setup.slHitAt = None
                 setup.status = "triggered"
-        setup.includeFirstCandle = include_first_candle
+        setup.includeFirstCandle = True
         return setup
 
     raise ValueError(f"Unknown strategy: {strategy!r}")

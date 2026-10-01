@@ -40,6 +40,10 @@ export interface TradingSettingsResponse {
   availableWatchlists: WatchlistOption[];
   swingSlEnabled: boolean;
   swingSlBufferPct: number;
+  tradeTelegramChannelId?: string | null;
+  tradeTelegramChannelName?: string | null;
+  tradeTelegramAlertsEnabled?: boolean;
+  availableTelegramChannels?: TelegramChannelOption[];
 }
 
 export interface TradingSettingsUpdate {
@@ -51,6 +55,9 @@ export interface TradingSettingsUpdate {
   entryMode?: "close" | "touch";
   swingSlEnabled?: boolean;
   swingSlBufferPct?: number;
+  tradeTelegramChannelId?: string | null;
+  tradeTelegramChannelName?: string | null;
+  tradeTelegramAlertsEnabled?: boolean;
 }
 
 export const settingsApi = {
@@ -76,6 +83,8 @@ export const settingsApi = {
     apiClient.get<TradingSettingsResponse>("/settings/trading"),
   updateTradingSettings: (payload: TradingSettingsUpdate) =>
     apiClient.put<TradingSettingsResponse>("/settings/trading", payload),
+  testTradeTelegramAlert: () =>
+    apiClient.post<{ ok: boolean; message: string }>("/settings/trading/test-telegram"),
 };
 
 

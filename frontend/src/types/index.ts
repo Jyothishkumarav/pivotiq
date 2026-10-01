@@ -304,6 +304,23 @@ export interface Position {
   stopLoss?: number | null;
   bufferedStopLoss?: number | null;
   strategyStopLoss?: number | null;
+  fyersUrl?: string;
+}
+
+export interface TradeNotification {
+  id: string;
+  symbol: string;
+  fyersSymbol: string;
+  fyersUrl: string;
+  side: "buy" | "sell";
+  qty: number;
+  entryPrice: number;
+  stopLoss: number;
+  strategy?: string | null;
+  time: string;
+  status: string;
+  message: string;
+  read: boolean;
 }
 
 export interface PortfolioSummary {
@@ -317,6 +334,7 @@ export interface PortfolioSummary {
 }
 
 export type BrokerType = "paper" | "fyers";
+
 
 export interface BrokerFunds {
   broker: string;

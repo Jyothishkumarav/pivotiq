@@ -23,9 +23,14 @@ def set_current_fyers_token(token: str | None) -> None:
     _current_fyers_token.set(token)
 
 
-async def get_active_fyers_token(user_id: ObjectId) -> str | None:
+async def get_active_fyers_token(user_id: ObjectId | str) -> str | None:
     """Return the user's Fyers access token if the session is still valid, else None."""
-    cred = await get_db().fyers_credentials.find_one({"userId": user_id})
+    uids: list[Any] = [user_id]
+    if ObjectId.is_valid(str(user_id)):
+        uids.append(ObjectId(str(user_id)))
+    if isinstance(user_id, ObjectId):
+        uids.append(str(user_id))
+    cred = await get_db().fyers_credentials.find_one({"userId": {"$in": uids}})
     if not cred:
         return None
     token = cred.get("accessToken")
@@ -39,3 +44,4 @@ async def get_active_fyers_token(user_id: ObjectId) -> str | None:
         if expires_at < datetime.now(timezone.utc):
             return None
     return token
+

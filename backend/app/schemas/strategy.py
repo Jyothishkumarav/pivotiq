@@ -3,13 +3,13 @@ from pydantic import BaseModel
 
 
 class StrategyName(str, Enum):
-    ORB_FLOW = "orb_flow"
+    BREAKOUT_SUPPORT = "breakout_support"
     ORB_PULLBACK_SUPPORT = "orb_pullback_support"
     ORB_PULLBACK = "orb_pullback"
 
 
 STRATEGY_DISPLAY_NAMES: dict[str, str] = {
-    StrategyName.ORB_FLOW.value: "ORB Institutional Flow",
+    StrategyName.BREAKOUT_SUPPORT.value: "Breakout Support",
     StrategyName.ORB_PULLBACK_SUPPORT.value: "ORB + Pullback Support",
     StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
     "orb_vwap": "ORB + VWAP",
@@ -17,7 +17,7 @@ STRATEGY_DISPLAY_NAMES: dict[str, str] = {
 }
 
 STRATEGY_SHORT_NAMES: dict[str, str] = {
-    StrategyName.ORB_FLOW.value: "Institutional Flow",
+    StrategyName.BREAKOUT_SUPPORT.value: "Breakout Support",
     StrategyName.ORB_PULLBACK_SUPPORT.value: "ORB + Pullback Support",
     StrategyName.ORB_PULLBACK.value: "ORB + VWAP Pullback",
     "orb_vwap": "ORB + VWAP",

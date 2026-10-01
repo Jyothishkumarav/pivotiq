@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     notification_service_enabled: bool = False
     notification_channels: list[str] = ["telegram"]
     notification_telegram_chat_id: str = ""
-    notification_enabled_strategies: list[str] = ["orb_flow", "orb_pullback_support", "orb_pullback"]
+    notification_enabled_strategies: list[str] = ["breakout_support", "orb_pullback_support", "orb_pullback"]
+    telegram_bot_token: str = ""
 
 
 @lru_cache

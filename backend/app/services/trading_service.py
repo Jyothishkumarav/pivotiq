@@ -255,9 +255,11 @@ def compute_positions(
                 stopLoss=s.get("stopLoss"),
                 bufferedStopLoss=s.get("bufferedStopLoss") or s.get("stopLoss"),
                 strategyStopLoss=s.get("strategyStopLoss"),
+                fyersUrl=f"https://fyers.in/web/symbol/NSE:{symbol}-EQ",
             )
         )
     return positions
+
 
 
 def _today_pnl_for_position(position: PositionOut) -> float:

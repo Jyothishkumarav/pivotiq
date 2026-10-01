@@ -314,10 +314,31 @@ class FyersBroker(BaseBroker):
 
     async def get_funds(self) -> BrokerFunds:
         """Fetch available funds and buying power with 5x intraday leverage."""
+        import time
+        from app.services.cache import get_cache_client
+        cache = None
+        cache_key = f"fyers:funds:{self.access_token[-12:]}" if len(self.access_token) >= 12 else "fyers:funds:default"
+        try:
+            cache = get_cache_client()
+            if cache:
+                cached = cache.get_json(cache_key)
+                if cached and (time.time() - cached.get("_cached_at", 0)) < 30:
+                    return BrokerFunds(**{k: v for k, v in cached.items() if not k.startswith("_")})
+        except Exception:
+            pass
+
         try:
             res = fyers_client.get_funds(self.access_token)
         except FyersError as exc:
             logger.warning("Fyers get_funds failed: %s", exc)
+            if cache:
+                try:
+                    cached = cache.get_json(cache_key)
+                    if cached and cached.get("available_balance", 0) > 0:
+                        logger.info("Using cached Fyers funds (₹%.2f) due to rate limit/error", cached["available_balance"])
+                        return BrokerFunds(**{k: v for k, v in cached.items() if not k.startswith("_")})
+                except Exception:
+                    pass
             return BrokerFunds(
                 broker=self.broker_name,
                 available_balance=0.0,
@@ -349,7 +370,7 @@ class FyersBroker(BaseBroker):
             total_bal = avail_bal + utilized
 
         buying_power = round(avail_bal * 5.0, 2)
-        return BrokerFunds(
+        funds = BrokerFunds(
             broker=self.broker_name,
             available_balance=round(avail_bal, 2),
             total_balance=round(total_bal, 2),
@@ -357,3 +378,12 @@ class FyersBroker(BaseBroker):
             realized_pnl=round(realized_pnl, 2),
             buying_power_5x=buying_power,
         )
+        if cache and avail_bal > 0:
+            try:
+                data = funds.model_dump()
+                data["_cached_at"] = time.time()
+                cache.set_json(cache_key, data, ttl_seconds=600)
+            except Exception:
+                pass
+        return funds
+

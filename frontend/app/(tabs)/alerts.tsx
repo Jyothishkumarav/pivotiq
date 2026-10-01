@@ -29,10 +29,10 @@ const STRATEGY_META: Record<string, { glyph: string; color: string; desc: string
     color: "#3DDB9F",
     desc: "Early entry on break of first reversal candle after pullback completes.",
   },
-  orb_flow: {
-    glyph: "⚡",
+  breakout_support: {
+    glyph: "🎯",
     color: "#7B61FF",
-    desc: "Morning window breakout with 3m close confirmation and index confluence position sizing.",
+    desc: "Dynamic reversal breakout with pullback support entry and adaptive MSL.",
   },
 };
 
