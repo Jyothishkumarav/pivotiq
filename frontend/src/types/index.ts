@@ -304,6 +304,11 @@ export interface Position {
   stopLoss?: number | null;
   bufferedStopLoss?: number | null;
   strategyStopLoss?: number | null;
+  trailingStopLoss?: number | null;
+  exitReason?: string | null;
+  isTrailSlHit?: boolean;
+  maxRunPts?: number | null;
+  maxRunR?: number | null;
   fyersUrl?: string;
 }
 

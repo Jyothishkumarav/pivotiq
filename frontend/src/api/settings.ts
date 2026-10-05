@@ -44,6 +44,9 @@ export interface TradingSettingsResponse {
   tradeTelegramChannelName?: string | null;
   tradeTelegramAlertsEnabled?: boolean;
   availableTelegramChannels?: TelegramChannelOption[];
+  autoTargetCloseEnabled?: boolean;
+  autoTargetRatio?: number;
+  targetMilestoneAlertsEnabled?: boolean;
 }
 
 export interface TradingSettingsUpdate {
@@ -55,6 +58,9 @@ export interface TradingSettingsUpdate {
   entryMode?: "close" | "touch";
   swingSlEnabled?: boolean;
   swingSlBufferPct?: number;
+  autoTargetCloseEnabled?: boolean;
+  autoTargetRatio?: number;
+  targetMilestoneAlertsEnabled?: boolean;
   tradeTelegramChannelId?: string | null;
   tradeTelegramChannelName?: string | null;
   tradeTelegramAlertsEnabled?: boolean;

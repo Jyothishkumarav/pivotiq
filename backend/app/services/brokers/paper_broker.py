@@ -255,6 +255,7 @@ class PaperBroker(BaseBroker):
                 "orderId": order_id,
                 "purpose": req.purpose.value,
                 "strategy": req.strategy,
+                "exitReason": req.tag or ("trail_sl_hit" if req.strategy == "trail_sl_hit" else None),
             }
             await self.db.paper_trades.insert_one(trade_doc)
 
@@ -312,11 +313,11 @@ class PaperBroker(BaseBroker):
                     price=doc.get("price", 0.0),
                     limit_price=doc.get("limitPrice"),
                     stop_price=doc.get("stopPrice"),
-                    side=OrderSide(doc["side"]),
-                    order_type=OrderType(doc["orderType"]),
+                    side=OrderSide(str(doc["side"]).lower()),
+                    order_type=OrderType(str(doc["orderType"]).lower().replace("-", "_")),
                     product_type=doc.get("productType", "INTRADAY"),
-                    status=OrderStatus(doc["status"]),
-                    purpose=OrderPurpose(doc.get("purpose", "entry")),
+                    status=OrderStatus(str(doc["status"]).lower()),
+                    purpose=OrderPurpose(str(doc.get("purpose", "entry")).lower()),
                     parent_order_id=doc.get("parentOrderId"),
                     strategy=doc.get("strategy"),
                     placed_at=doc["placedAt"],

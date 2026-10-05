@@ -606,6 +606,7 @@ async def execute_exit_order(
     strategy: str | None = None,
     order_type: OrderType = OrderType.MARKET,
     limit_price: float | None = None,
+    tag: str | None = None,
 ) -> BrokerOrderResponse:
     """Executes an exit / square-off order (Intraday MIS)."""
     exit_req = BrokerOrderRequest(
@@ -617,6 +618,7 @@ async def execute_exit_order(
         product_type=ProductType.INTRADAY,
         purpose=OrderPurpose.EXIT,
         strategy=strategy,
+        tag=tag,
     )
     return await broker.place_order(exit_req)
 
@@ -641,21 +643,64 @@ async def execute_sell_exit_order(
     )
 
 
+async def _get_active_watchlists(user_id: ObjectId | str, db: AsyncIOMotorDatabase) -> list[dict]:
+    """Return the watchlist docs the user has selected as Target Watchlist for Trading.
+
+    If no specific watchlist is selected ("all"/unset), every user watchlist is active.
+    """
+    user_ids = [str(user_id)]
+    if ObjectId.is_valid(str(user_id)):
+        user_ids.append(ObjectId(str(user_id)))
+    from app.services import trading_service
+    cfg = await trading_service.get_user_trading_config(user_id, db)
+    active_wl_id = cfg.get("activeWatchlistId")
+    query: dict[str, Any] = {"userId": {"$in": user_ids}}
+    if active_wl_id and active_wl_id not in ("all", ""):
+        query["_id"] = ObjectId(active_wl_id) if ObjectId.is_valid(active_wl_id) else active_wl_id
+    return await db.watchlists.find(query).to_list(100)
+
+
+async def get_active_watchlist_symbols(user_id: ObjectId | str, db: AsyncIOMotorDatabase) -> set[str]:
+    """Symbols belonging to the active (target) watchlist(s). Only these may be auto-traded."""
+    wls = await _get_active_watchlists(user_id, db)
+    return {
+        str(i.get("symbol") or "").upper()
+        for wl in wls
+        for i in wl.get("items", [])
+        if i.get("symbol")
+    }
+
+
 async def is_symbol_autotrade_enabled(user_id: ObjectId | str, symbol: str, db: AsyncIOMotorDatabase) -> bool:
-    """Check if the symbol has autoTrade explicitly enabled in any of the user's watchlists."""
+    """Live (Fyers) routing is controlled at WATCHLIST level only.
+
+    True only when the symbol is in an ACTIVE watchlist whose watchlist-level
+    `autoTrade` flag is on. Per-item `autoTrade` flags are ignored.
+    """
     sym = symbol.upper()
     try:
-        user_ids = [str(user_id)]
-        if ObjectId.is_valid(str(user_id)):
-            user_ids.append(ObjectId(str(user_id)))
-        doc = await db.watchlists.find_one({
-            "userId": {"$in": user_ids},
-            "items": {"$elemMatch": {"symbol": sym, "autoTrade": True}},
-        })
-        return doc is not None
+        wls = await _get_active_watchlists(user_id, db)
+        for wl in wls:
+            if not wl.get("autoTrade", False):
+                continue
+            if any(str(i.get("symbol") or "").upper() == sym for i in wl.get("items", [])):
+                return True
+        return False
     except Exception as exc:
         logger.warning("Error checking symbol autotrade status for %s: %s", sym, exc)
         return False
+
+
+async def count_entries_today(user_ids: list, db: AsyncIOMotorDatabase, date_str: str) -> int:
+    """Number of paper entry orders placed on the session date (exits never exceed entries)."""
+    start = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=0, minute=0, second=0)
+    end = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc, hour=23, minute=59, second=59)
+    return await db.paper_orders.count_documents({
+        "userId": {"$in": user_ids},
+        "purpose": "entry",
+        "status": {"$nin": ["rejected", "cancelled"]},
+        "placedAt": {"$gte": start, "$lte": end},
+    })
 
 
 async def trigger_autotrade_if_enabled(
@@ -695,6 +740,16 @@ async def trigger_autotrade_if_enabled(
     sym_upper = snapshot.symbol.upper()
     date_str = (setup.triggeredAt.astimezone(timezone.utc)).date().isoformat()
     action = setup.action.lower()
+
+    # Watchlist-level control: only symbols in the active (target) watchlist may trade.
+    if db is not None:
+        try:
+            if sym_upper not in await get_active_watchlist_symbols(user_id, db):
+                logger.info("[autotrade] Skipping %s: not in active target watchlist", sym_upper)
+                return None
+        except Exception as exc:
+            logger.warning("[autotrade] Active watchlist check failed for %s: %s", sym_upper, exc)
+            return None
 
     try:
         from app.services.cache import get_cache_client
@@ -763,10 +818,11 @@ async def trigger_autotrade_if_enabled(
                     except TypeError:
                         _chk_positions = await _chk_broker.get_positions()
                     _open_count = sum(1 for p in _chk_positions if p.netQty != 0)
-                    if _open_count >= _max_pos:
+                    _entries_today = await count_entries_today(user_ids, db, date_str)
+                    if _open_count >= _max_pos or _entries_today >= _max_pos:
                         logger.info(
-                            "[autotrade] Skipping %s: max open positions (%d) reached (%d open)",
-                            sym_upper, _max_pos, _open_count,
+                            "[autotrade] Skipping %s: limit reached (max %d; %d open, %d entries today)",
+                            sym_upper, _max_pos, _open_count, _entries_today,
                         )
                     else:
                         try:
@@ -923,7 +979,7 @@ async def sync_watchlist_entered_trades(
                 sym = str(item.get("symbol") or "").upper()
                 if not sym:
                     continue
-                is_live = bool(item.get("autoTrade", False))
+                is_live = bool(wl.get("autoTrade", False))
                 if sym not in symbols_map or is_live:
                     symbols_map[sym] = {"is_live": is_live, "strategy": strat}
 
@@ -988,6 +1044,9 @@ async def sync_watchlist_entered_trades(
                     continue
                 if len(current_open_syms) >= max_positions:
                     logger.info("Reached maximum %d open positions for %s, stopping auto-sync", max_positions, date_str)
+                    break
+                if not is_live and await count_entries_today(user_ids, db, date_str) >= max_positions:
+                    logger.info("Reached maximum %d entries for %s, stopping auto-sync", max_positions, date_str)
                     break
 
                 try:

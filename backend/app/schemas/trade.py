@@ -69,6 +69,11 @@ class PositionOut(BaseModel):
     stopLoss: float | None = None
     bufferedStopLoss: float | None = None
     strategyStopLoss: float | None = None
+    trailingStopLoss: float | None = None
+    exitReason: str | None = None
+    isTrailSlHit: bool = False
+    maxRunPts: float | None = None
+    maxRunR: float | None = None
     fyersUrl: str | None = None
 
 

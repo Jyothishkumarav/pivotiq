@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -75,6 +76,7 @@ class ExitPositionRequest(BaseModel):
     symbol: str
     broker: str = "paper"
     strategy: str | None = None
+    exitPrice: float | None = None
 
 
 @router.get("/trades/funds", response_model=BrokerFunds)
@@ -189,14 +191,18 @@ async def exit_position(
     exit_side = OrderSide.SELL if is_long else OrderSide.BUY
     sl_side = OrderSide.SELL if is_long else OrderSide.BUY
 
-    # 1. Place market exit order
+    order_type = OrderType.LIMIT if (payload.exitPrice is not None and payload.exitPrice > 0) else OrderType.MARKET
+    limit_price = round(float(payload.exitPrice), 2) if order_type == OrderType.LIMIT else None
+
+    # 1. Place exit order
     exit_res = await execute_exit_order(
         broker=broker_client,
         symbol=pos.symbol,
         qty=abs(pos.netQty),
         side=exit_side,
         strategy=payload.strategy,
-        order_type=OrderType.MARKET,
+        order_type=order_type,
+        limit_price=limit_price,
     )
 
     # 2. Cancel any pending SL orders for this symbol
@@ -264,11 +270,8 @@ async def list_positions(
     current_user: dict = Depends(get_current_user),
 ) -> list[PositionOut]:
     db = get_db()
-    # Auto-sync any watchlist items that triggered/entered for the requested session
-    try:
-        await sync_watchlist_entered_trades(current_user["_id"], db, target_date=date)
-    except Exception:
-        pass
+    # Fast non-blocking background auto-sync
+    asyncio.create_task(sync_watchlist_entered_trades(current_user["_id"], db, target_date=date))
 
     if broker.lower() == "fyers":
         broker_client = await get_broker("fyers", current_user["_id"], db)
@@ -293,12 +296,6 @@ async def portfolio_summary(
     current_user: dict = Depends(get_current_user),
 ) -> PortfolioSummary:
     db = get_db()
-    # Auto-sync any watchlist items that triggered/entered for the requested session
-    try:
-        await sync_watchlist_entered_trades(current_user["_id"], db, target_date=date)
-    except Exception:
-        pass
-
     if broker.lower() == "fyers":
         broker_client = await get_broker("fyers", current_user["_id"], db)
         positions = await broker_client.get_positions()

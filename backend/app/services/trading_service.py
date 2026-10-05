@@ -28,6 +28,9 @@ async def get_user_trading_config(user_id: ObjectId | str, db: AsyncIOMotorDatab
         "entryMode": "close",
         "swingSlEnabled": False,
         "swingSlBufferPct": 1.0,
+        "autoTargetCloseEnabled": True,
+        "autoTargetRatio": 2.0,
+        "targetMilestoneAlertsEnabled": True,
     }
     if db is None:
         return default_config
@@ -107,6 +110,8 @@ def compute_positions(
             "stopLoss": None,
             "bufferedStopLoss": None,
             "strategyStopLoss": None,
+            "trailingStopLoss": None,
+            "exitReason": None,
         }
     )
     for t in filled:
@@ -116,10 +121,23 @@ def compute_positions(
         if isinstance(exec_at, datetime) and exec_at.tzinfo is None:
             exec_at = exec_at.replace(tzinfo=timezone.utc)
         s["lastTransactionAt"] = exec_at
-        qty = int(t.get("qty", 0))
+        qty = int(t.get("qty") or t.get("quantity", 0))
         price = float(t.get("price", 0.0))
         side = str(t.get("side", "buy")).lower()
         purpose = str(t.get("purpose", "")).lower()
+
+        if t.get("trailingStopLoss"):
+            s["trailingStopLoss"] = float(t["trailingStopLoss"])
+        elif purpose in ("trail_sl", "trailing_sl"):
+            s["trailingStopLoss"] = price
+
+        exit_reason = t.get("exitReason") or t.get("reason")
+        if exit_reason:
+            s["exitReason"] = exit_reason
+        elif purpose in ("trail_sl_hit", "trailing_sl_hit"):
+            s["exitReason"] = "trail_sl_hit"
+        elif purpose in ("stop_loss_hit", "sl_hit"):
+            s["exitReason"] = "sl_hit"
 
         if purpose == "stop_loss":
             s["stopLoss"] = price
@@ -187,6 +205,17 @@ def compute_positions(
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     is_past_session = bool(target_date and target_date < today_str)
 
+    open_symbols = [
+        sym for (sym, seg), s in state.items()
+        if s["netQty"] != 0 and not is_index_symbol(sym)
+    ]
+    quotes_map: dict[str, Any] = {}
+    if open_symbols and not is_past_session:
+        try:
+            quotes_map = market_data.get_quotes_batch(open_symbols, access_token=access_token) or {}
+        except Exception:
+            quotes_map = {}
+
     positions: list[PositionOut] = []
     for (symbol, segment), s in state.items():
         if is_index_symbol(symbol):
@@ -204,7 +233,7 @@ def compute_positions(
 
         if s["netQty"] != 0:
             # Active open position
-            quote = market_data.get_quote(symbol, access_token=access_token)
+            quote = quotes_map.get(symbol) or market_data.get_quote(symbol, access_token=access_token)
             change_pct = float(quote.changePercent) if quote is not None else 0.0
             last_updated = quote.lastUpdated if quote is not None else (s["lastTransactionAt"] or datetime.now(timezone.utc))
 
@@ -236,6 +265,64 @@ def compute_positions(
             pnl_pct = round((pnl / initial_val) * 100, 2) if initial_val else 0.0
             display_avg = round(s["entryAvgPrice"], 2)
 
+        is_trail_sl_hit = (s.get("exitReason") == "trail_sl_hit") or (
+            s["netQty"] == 0
+            and s.get("trailingStopLoss")
+            and s.get("lastExitPrice")
+            and abs(float(s["lastExitPrice"]) - float(s["trailingStopLoss"])) < 0.2
+        )
+
+        # Calculate Max Run (Maximum points gained towards trade direction after entry)
+        entry_price = float(s["entryAvgPrice"] or s["avgPrice"] or 0.0)
+        pos_side = str(s.get("entrySide") or ("buy" if s["netQty"] > 0 else "sell")).lower()
+        is_buy_side = pos_side == "buy"
+        sl_val = float(s.get("stopLoss") or s.get("bufferedStopLoss") or 0.0)
+        sl_diff = abs(entry_price - sl_val) if (entry_price and sl_val) else 0.0
+
+        max_run_pts: float | None = None
+        max_run_r: float | None = None
+
+        if entry_price > 0:
+            baseline_run = max(0.0, ltp - entry_price) if is_buy_side else max(0.0, entry_price - ltp)
+            max_run_pts = baseline_run
+
+            sess_date = target_date or today_str
+            cache_key = f"portfolio:max_run:{symbol}:{sess_date}"
+            cache = None
+            try:
+                from app.services.cache import get_cache_client
+                cache = get_cache_client()
+            except Exception:
+                pass
+
+            cached_run = cache.get_json(cache_key) if cache else None
+            if cached_run and isinstance(cached_run, dict) and "maxRunPts" in cached_run:
+                max_run_pts = max(max_run_pts, float(cached_run["maxRunPts"]))
+            elif access_token:
+                try:
+                    from app.services import fyers_client
+                    resp = fyers_client.get_history(access_token, symbol, resolution="5", date_from=sess_date, date_to=sess_date)
+                    candles = resp.get("candles") or []
+                    if candles:
+                        exec_dt = s.get("firstBoughtAt")
+                        exec_ts = exec_dt.timestamp() if isinstance(exec_dt, datetime) else 0
+                        after_candles = [c for c in candles if c[0] >= exec_ts - 300] or candles
+                        if is_buy_side:
+                            peak_px = max(c[2] for c in after_candles)
+                            max_run_pts = max(max_run_pts, peak_px - entry_price)
+                        else:
+                            valley_px = min(c[3] for c in after_candles)
+                            max_run_pts = max(max_run_pts, entry_price - valley_px)
+                        max_run_pts = round(max(0.0, max_run_pts), 2)
+                        if cache:
+                            cache.set_json(cache_key, {"maxRunPts": max_run_pts}, ttl_seconds=300)
+                except Exception:
+                    pass
+
+            max_run_pts = round(max(0.0, max_run_pts), 2)
+            if sl_diff > 0:
+                max_run_r = round(max_run_pts / sl_diff, 2)
+
         positions.append(
             PositionOut(
                 symbol=symbol,
@@ -255,6 +342,11 @@ def compute_positions(
                 stopLoss=s.get("stopLoss"),
                 bufferedStopLoss=s.get("bufferedStopLoss") or s.get("stopLoss"),
                 strategyStopLoss=s.get("strategyStopLoss"),
+                trailingStopLoss=s.get("trailingStopLoss"),
+                exitReason="trail_sl_hit" if is_trail_sl_hit else s.get("exitReason"),
+                isTrailSlHit=bool(is_trail_sl_hit),
+                maxRunPts=max_run_pts,
+                maxRunR=max_run_r,
                 fyersUrl=f"https://fyers.in/web/symbol/NSE:{symbol}-EQ",
             )
         )

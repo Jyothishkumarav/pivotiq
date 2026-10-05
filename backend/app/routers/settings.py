@@ -410,6 +410,10 @@ class TradingSettingsResponse(BaseModel):
     # Swing SL settings
     swingSlEnabled: bool = False
     swingSlBufferPct: float = 1.0  # % added on top of detected swing level
+    # Auto Target Close & Milestones
+    autoTargetCloseEnabled: bool = True
+    autoTargetRatio: float = 2.0  # 1.0, 1.5, 2.0 R multiple of SL difference
+    targetMilestoneAlertsEnabled: bool = True
     # Telegram Trade Alerts settings
     tradeTelegramChannelId: str | None = "-1003999053085"
     tradeTelegramChannelName: str | None = "FyersTrade"
@@ -427,6 +431,10 @@ class TradingSettingsUpdate(BaseModel):
     # Swing SL settings
     swingSlEnabled: bool | None = None
     swingSlBufferPct: float | None = None
+    # Auto Target Close & Milestones
+    autoTargetCloseEnabled: bool | None = None
+    autoTargetRatio: float | None = None
+    targetMilestoneAlertsEnabled: bool | None = None
     # Telegram Trade Alerts settings
     tradeTelegramChannelId: str | None = None
     tradeTelegramChannelName: str | None = None
@@ -459,6 +467,9 @@ async def get_trading_settings(current_user: dict = Depends(get_current_user)) -
         availableWatchlists=wl_options,
         swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
         swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
+        autoTargetCloseEnabled=bool(cfg.get("autoTargetCloseEnabled", True)),
+        autoTargetRatio=float(cfg.get("autoTargetRatio", 2.0)),
+        targetMilestoneAlertsEnabled=bool(cfg.get("targetMilestoneAlertsEnabled", True)),
         tradeTelegramChannelId=str(cfg.get("tradeTelegramChannelId", "-1003999053085")),
         tradeTelegramChannelName=str(cfg.get("tradeTelegramChannelName", "FyersTrade")),
         tradeTelegramAlertsEnabled=bool(cfg.get("tradeTelegramAlertsEnabled", True)),
@@ -493,6 +504,12 @@ async def update_trading_settings(
         cfg["swingSlEnabled"] = bool(payload.swingSlEnabled)
     if payload.swingSlBufferPct is not None:
         cfg["swingSlBufferPct"] = max(0.0, min(20.0, float(payload.swingSlBufferPct)))
+    if payload.autoTargetCloseEnabled is not None:
+        cfg["autoTargetCloseEnabled"] = bool(payload.autoTargetCloseEnabled)
+    if payload.autoTargetRatio is not None:
+        cfg["autoTargetRatio"] = max(0.5, min(10.0, float(payload.autoTargetRatio)))
+    if payload.targetMilestoneAlertsEnabled is not None:
+        cfg["targetMilestoneAlertsEnabled"] = bool(payload.targetMilestoneAlertsEnabled)
     if payload.tradeTelegramChannelId is not None:
         cfg["tradeTelegramChannelId"] = payload.tradeTelegramChannelId.strip()
     if payload.tradeTelegramChannelName is not None:
@@ -526,6 +543,9 @@ async def update_trading_settings(
         availableWatchlists=wl_options,
         swingSlEnabled=bool(cfg.get("swingSlEnabled", False)),
         swingSlBufferPct=float(cfg.get("swingSlBufferPct", 1.0)),
+        autoTargetCloseEnabled=bool(cfg.get("autoTargetCloseEnabled", True)),
+        autoTargetRatio=float(cfg.get("autoTargetRatio", 2.0)),
+        targetMilestoneAlertsEnabled=bool(cfg.get("targetMilestoneAlertsEnabled", True)),
         tradeTelegramChannelId=str(cfg.get("tradeTelegramChannelId", "-1003999053085")),
         tradeTelegramChannelName=str(cfg.get("tradeTelegramChannelName", "FyersTrade")),
         tradeTelegramAlertsEnabled=bool(cfg.get("tradeTelegramAlertsEnabled", True)),

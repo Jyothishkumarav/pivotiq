@@ -834,3 +834,499 @@ def notify_trade_execution(
     return sent
 
 
+def notify_target_milestone_reached(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    current_ltp: float,
+    stop_loss: float,
+    ratio: float,
+    qty: int,
+    user_id: Any | None = None,
+    broker: str = "Paper",
+) -> bool:
+    """Dispatches a notification on the dedicated Trade Channel when position moves 1.0R, 1.5R, or 2.0R in profit."""
+    settings = get_settings()
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True)) and bool(cfg.get("targetMilestoneAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    sl_diff = abs(entry_price - stop_loss)
+    pts_move = (current_ltp - entry_price) if is_buy else (entry_price - current_ltp)
+    pct_move = (pts_move / entry_price) * 100 if entry_price else 0.0
+    unrealized_pnl = pts_move * qty
+
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    now_str = datetime.now(_IST).strftime("%I:%M:%S %p")
+
+    title = f"🎯 MILESTONE: {clean_symbol} Reached {ratio:.1f}R Target"
+    lines = [
+        f"🎯 <b>PORTFOLIO MILESTONE: {clean_symbol} — {ratio:.1f}R GAIN</b>",
+        f"────────────────────────────",
+        f"📊 <b>Position:</b> {action_emoji} <b>{action_label}</b> ({qty} shs)",
+        f"💵 <b>Entry Price:</b> ₹{entry_price:,.2f}",
+        f"🛑 <b>Stop Loss:</b> ₹{stop_loss:,.2f} (SL Diff: ₹{sl_diff:.2f})",
+        f"⚡ <b>Current LTP:</b> <b>₹{current_ltp:,.2f}</b>",
+        f"📈 <b>Gain:</b> <b>+{ratio:.1f}x SL Diff</b> (+₹{pts_move:.2f} / +{pct_move:.2f}%)",
+        f"💰 <b>Unrealized P&L:</b> <b>+₹{unrealized_pnl:,.2f}</b>",
+        f"⏱️ <b>Time:</b> {now_str} IST",
+        f"🏦 <b>Account:</b> {broker}",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">VIEW CHART ON FYERS WEB</a></b>",
+    ]
+    message_text = "\n".join(lines)
+
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"milestone-{clean_symbol}-{ratio}r-{int(datetime.now().timestamp())}",
+            "metadata": {"symbol": clean_symbol, "ratio": ratio, "ltp": current_ltp},
+        }
+        res = requests.post(f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications", json=payload, timeout=4)
+        if res.ok:
+            sent = True
+    except Exception:
+        pass
+
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": channel_id, "text": f"<b>{title}</b>\n\n{message_text}", "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=5,
+                )
+                sent = True
+            except Exception:
+                pass
+    return sent
+
+
+def notify_position_auto_closed(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    exit_price: float,
+    stop_loss: float,
+    ratio: float,
+    qty: int,
+    realized_pnl: float,
+    user_id: Any | None = None,
+    broker: str = "Paper",
+) -> bool:
+    """Dispatches a notification on the dedicated Trade Channel when position auto-closes at target (1.5R / 2.0R)."""
+    settings = get_settings()
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    pct_pnl = (realized_pnl / (entry_price * qty)) * 100 if (entry_price * qty) else 0.0
+
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    now_str = datetime.now(_IST).strftime("%I:%M:%S %p")
+
+    title = f"🎉 TARGET HIT: {clean_symbol} Auto-Closed at {ratio:.1f}R (+₹{realized_pnl:,.2f})"
+    lines = [
+        f"🎉 <b>AUTO-TARGET HIT & SQUARED OFF — {clean_symbol}</b>",
+        f"────────────────────────────",
+        f"📊 <b>Position:</b> {action_emoji} <b>{action_label}</b> ({qty} shs)",
+        f"🎯 <b>Target Ratio:</b> <b>{ratio:.1f}R Target</b>",
+        f"💵 <b>Entry Price:</b> ₹{entry_price:,.2f}",
+        f"🏁 <b>Exit Price:</b> <b>₹{exit_price:,.2f}</b>",
+        f"💰 <b>Realized Profit:</b> <b>+₹{realized_pnl:,.2f} (+{pct_pnl:.2f}%)</b>",
+        f"⏱️ <b>Closed At:</b> {now_str} IST",
+        f"🏦 <b>Execution:</b> {broker}",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">VIEW CHART ON FYERS WEB</a></b>",
+    ]
+    message_text = "\n".join(lines)
+
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"autoclose-{clean_symbol}-{int(datetime.now().timestamp())}",
+            "metadata": {"symbol": clean_symbol, "ratio": ratio, "exitPrice": exit_price, "pnl": realized_pnl},
+        }
+        res = requests.post(f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications", json=payload, timeout=4)
+        if res.ok:
+            sent = True
+    except Exception:
+        pass
+
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": channel_id, "text": f"<b>{title}</b>\n\n{message_text}", "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=5,
+                )
+                sent = True
+            except Exception:
+                pass
+    return sent
+
+
+def notify_position_sl_closed(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    exit_price: float,
+    stop_loss: float,
+    qty: int,
+    realized_pnl: float,
+    user_id: Any | None = None,
+    broker: str = "Paper",
+) -> bool:
+    """Dispatches a notification on the dedicated Trade Channel when position hits SL and closes."""
+    settings = get_settings()
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    pct_pnl = (realized_pnl / (entry_price * qty)) * 100 if (entry_price * qty) else 0.0
+
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    now_str = datetime.now(_IST).strftime("%I:%M:%S %p")
+
+    title = f"🛑 STOP LOSS HIT: {clean_symbol} Closed at ₹{exit_price:,.2f}"
+    lines = [
+        f"🛑 <b>STOP LOSS HIT & SQUARED OFF — {clean_symbol}</b>",
+        f"────────────────────────────",
+        f"📊 <b>Position:</b> {action_emoji} <b>{action_label}</b> ({qty} shs)",
+        f"💵 <b>Entry Price:</b> ₹{entry_price:,.2f}",
+        f"🛑 <b>Stop Loss:</b> ₹{stop_loss:,.2f}",
+        f"🏁 <b>Exit Price:</b> <b>₹{exit_price:,.2f}</b>",
+        f"📉 <b>Realized Loss:</b> <b>-₹{abs(realized_pnl):,.2f} ({pct_pnl:.2f}%)</b>",
+        f"⏱️ <b>Closed At:</b> {now_str} IST",
+        f"🏦 <b>Execution:</b> {broker}",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">VIEW CHART ON FYERS WEB</a></b>",
+    ]
+    message_text = "\n".join(lines)
+
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"slclose-{clean_symbol}-{int(datetime.now().timestamp())}",
+            "metadata": {"symbol": clean_symbol, "exitPrice": exit_price, "pnl": realized_pnl},
+        }
+        res = requests.post(f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications", json=payload, timeout=4)
+        if res.ok:
+            sent = True
+    except Exception:
+        pass
+
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": channel_id, "text": f"<b>{title}</b>\n\n{message_text}", "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=5,
+                )
+                sent = True
+            except Exception:
+                pass
+    return sent
+
+
+def notify_position_trailing_sl_updated(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    current_ltp: float,
+    initial_sl: float,
+    trailing_sl: float,
+    qty: int,
+    user_id: Any | None = None,
+    broker: str = "Paper",
+) -> bool:
+    """Dispatches an alert when LTP crosses 2.0R and the position's Stop-Loss is trailed to 2.0R."""
+    settings = get_settings()
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    now_str = datetime.now(_IST).strftime("%I:%M:%S %p")
+
+    locked_pnl = round(abs(trailing_sl - entry_price) * qty, 2)
+    locked_pct = (abs(trailing_sl - entry_price) / entry_price) * 100 if entry_price else 0.0
+
+    title = f"🚀 2.0R HIT: {clean_symbol} Trailing SL Set to ₹{trailing_sl:,.2f}"
+    lines = [
+        f"🚀 <b>TARGET 2.0R CROSSED — TRAILING SL ACTIVATED</b>",
+        f"────────────────────────────",
+        f"📈 <b>Stock:</b> <b>{clean_symbol}</b> ({action_emoji} {action_label})",
+        f"📦 <b>Size:</b> {qty} shares",
+        f"💵 <b>Entry Price:</b> ₹{entry_price:,.2f}",
+        f"⚡ <b>Current LTP:</b> ₹{current_ltp:,.2f}",
+        f"🛡️ <b>Original SL:</b> ₹{initial_sl:,.2f}",
+        f"🔒 <b>NEW TRAILING SL (2R):</b> <b>₹{trailing_sl:,.2f}</b>",
+        f"💰 <b>Guaranteed Profit:</b> <b>+₹{locked_pnl:,.2f} (+{locked_pct:.2f}%)</b>",
+        f"🏃 <b>Status:</b> <b>TRADE ACTIVE & RUNNING</b>",
+        f"ℹ️ <i>Stop loss locked at 2.0R. If price drops to ₹{trailing_sl:,.2f}, position will exit with profit locked in.</i>",
+        f"⏱️ <b>Time:</b> {now_str} IST",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">VIEW LIVE CHART ON FYERS</a></b>",
+    ]
+    message_text = "\n".join(lines)
+
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"trailed-{clean_symbol}-{int(datetime.now().timestamp())}",
+            "metadata": {"symbol": clean_symbol, "trailingSl": trailing_sl, "lockedPnl": locked_pnl},
+        }
+        res = requests.post(f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications", json=payload, timeout=4)
+        if res.ok:
+            sent = True
+    except Exception:
+        pass
+
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": channel_id, "text": f"<b>{title}</b>\n\n{message_text}", "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=5,
+                )
+                sent = True
+            except Exception:
+                pass
+    return sent
+
+
+def notify_position_trail_sl_closed(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    exit_price: float,
+    trailing_sl: float,
+    qty: int,
+    realized_pnl: float,
+    user_id: Any | None = None,
+    broker: str = "Paper",
+) -> bool:
+    """Dispatches a notification when position exits upon hitting the Trailing Stop-Loss."""
+    settings = get_settings()
+    channel_id = "-1003999053085"
+    alerts_enabled = True
+
+    try:
+        from bson import ObjectId
+        from app.services.intraday_analysis import get_trigger_collection
+        db = get_trigger_collection().database
+        query: dict[str, Any] = {"type": "trading_config"}
+        if user_id:
+            uid_str = str(user_id)
+            conds: list[dict] = [{"userId": uid_str}]
+            if ObjectId.is_valid(uid_str):
+                conds.append({"userId": ObjectId(uid_str)})
+            query["$or"] = conds
+        doc = db.user_settings.find_one(query)
+        if not doc and user_id:
+            doc = db.user_settings.find_one({"type": "trading_config"})
+        if doc and "config" in doc and isinstance(doc["config"], dict):
+            cfg = doc["config"]
+            channel_id = cfg.get("tradeTelegramChannelId") or channel_id
+            alerts_enabled = bool(cfg.get("tradeTelegramAlertsEnabled", True))
+    except Exception as exc:
+        logger.warning("Could not read trading Telegram config: %s", exc)
+
+    if not alerts_enabled:
+        return False
+
+    is_buy = side.lower() == "buy"
+    action_label = "BUY" if is_buy else "SELL"
+    action_emoji = "🟢" if is_buy else "🔴"
+    pct_pnl = (realized_pnl / (entry_price * qty)) * 100 if (entry_price * qty) else 0.0
+
+    clean_symbol = symbol.upper().replace("NSE:", "").replace("-EQ", "")
+    fyers_symbol = f"NSE:{clean_symbol}-EQ"
+    fyers_url = f"https://fyers.in/web/symbol/{fyers_symbol}"
+    now_str = datetime.now(_IST).strftime("%I:%M:%S %p")
+
+    title = f"🛡️ TRAILING SL HIT: {clean_symbol} Closed at ₹{exit_price:,.2f}"
+    lines = [
+        f"🛡️ <b>TRAILING STOP LOSS HIT — {clean_symbol}</b>",
+        f"────────────────────────────",
+        f"📊 <b>Position:</b> {action_emoji} <b>{action_label}</b> ({qty} shs)",
+        f"💵 <b>Entry Price:</b> ₹{entry_price:,.2f}",
+        f"🔒 <b>Trailed SL:</b> ₹{trailing_sl:,.2f} (2.0R)",
+        f"🏁 <b>Exit Price:</b> <b>₹{exit_price:,.2f}</b>",
+        f"🏆 <b>Realized Profit:</b> <b>+₹{realized_pnl:,.2f} (+{pct_pnl:.2f}%)</b>",
+        f"🏷️ <b>Exit Status:</b> <b>TRAILING SL HIT</b>",
+        f"⏱️ <b>Closed At:</b> {now_str} IST",
+        f"🏦 <b>Execution:</b> {broker}",
+        f"────────────────────────────",
+        f"👉 <b><a href=\"{fyers_url}\">VIEW CHART ON FYERS WEB</a></b>",
+    ]
+    message_text = "\n".join(lines)
+
+    sent = False
+    try:
+        payload = {
+            "channels": ["telegram"],
+            "recipient": {"telegramChatId": channel_id},
+            "title": title,
+            "data": message_text,
+            "reference": f"trailslclose-{clean_symbol}-{int(datetime.now().timestamp())}",
+            "metadata": {"symbol": clean_symbol, "exitPrice": exit_price, "pnl": realized_pnl, "reason": "trail_sl_hit"},
+        }
+        res = requests.post(f"{settings.notification_service_url.rstrip('/')}/api/v1/notifications", json=payload, timeout=4)
+        if res.ok:
+            sent = True
+    except Exception:
+        pass
+
+    if not sent:
+        token = getattr(settings, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": channel_id, "text": f"<b>{title}</b>\n\n{message_text}", "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=5,
+                )
+                sent = True
+            except Exception:
+                pass
+    return sent
+
+
+

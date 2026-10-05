@@ -25,6 +25,7 @@ import { formatCurrency } from "@/utils/format";
 
 const CAPITAL_PRESETS = [50_000, 100_000, 200_000, 500_000, 1_000_000];
 const SL_BUFFER_PRESETS = [20, 25, 40, 50, 70, 75, 80, 100];
+const TARGET_RATIO_PRESETS = [1.0, 1.5, 2.0, 2.5, 3.0];
 const RISK_PRESETS = [500, 800, 1000, 1100, 1500, 2000];
 const POSITIONS_PRESETS = [5, 10, 15, 20];
 
@@ -45,6 +46,9 @@ export default function SettingsScreen() {
   const [entryMode, setEntryMode] = useState<"close" | "touch">("close");
   const [swingSlEnabled, setSwingSlEnabled] = useState<boolean>(false);
   const [swingSlBuffer, setSwingSlBuffer] = useState<string>("1");
+  const [autoTargetCloseEnabled, setAutoTargetCloseEnabled] = useState<boolean>(true);
+  const [autoTargetRatio, setAutoTargetRatio] = useState<string>("2.0");
+  const [targetMilestoneAlertsEnabled, setTargetMilestoneAlertsEnabled] = useState<boolean>(true);
   const [tradeTelegramAlertsEnabled, setTradeTelegramAlertsEnabled] = useState<boolean>(true);
   const [tradeTelegramChannelId, setTradeTelegramChannelId] = useState<string>("-1003999053085");
   const [tradeTelegramChannelName, setTradeTelegramChannelName] = useState<string>("FyersTrade");
@@ -65,6 +69,9 @@ export default function SettingsScreen() {
       }
       setSwingSlEnabled(Boolean(data.swingSlEnabled));
       setSwingSlBuffer(String(data.swingSlBufferPct ?? 1));
+      setAutoTargetCloseEnabled(data.autoTargetCloseEnabled ?? true);
+      setAutoTargetRatio(String(data.autoTargetRatio ?? 2.0));
+      setTargetMilestoneAlertsEnabled(data.targetMilestoneAlertsEnabled ?? true);
       setTradeTelegramAlertsEnabled(data.tradeTelegramAlertsEnabled ?? true);
       setTradeTelegramChannelId(data.tradeTelegramChannelId || "-1003999053085");
       setTradeTelegramChannelName(data.tradeTelegramChannelName || "FyersTrade");
@@ -121,6 +128,9 @@ export default function SettingsScreen() {
       entryMode,
       swingSlEnabled,
       swingSlBufferPct: Math.max(0, Number(swingSlBuffer) || 1),
+      autoTargetCloseEnabled,
+      autoTargetRatio: Math.max(0.5, Number(autoTargetRatio) || 2.0),
+      targetMilestoneAlertsEnabled,
       tradeTelegramChannelId,
       tradeTelegramChannelName,
       tradeTelegramAlertsEnabled,
@@ -136,6 +146,9 @@ export default function SettingsScreen() {
     setEntryMode("close");
     setSwingSlEnabled(false);
     setSwingSlBuffer("1");
+    setAutoTargetCloseEnabled(true);
+    setAutoTargetRatio("2.0");
+    setTargetMilestoneAlertsEnabled(true);
     setTradeTelegramAlertsEnabled(true);
     setTradeTelegramChannelId("-1003999053085");
     setTradeTelegramChannelName("FyersTrade");
@@ -771,6 +784,129 @@ export default function SettingsScreen() {
                 size="sm"
                 onPress={handleTestAlert}
                 loading={testSending}
+              />
+            </View>
+          </Card>
+
+          {/* 3D. TARGET PROFIT & AUTO-CLOSE (STRETCHED SL) */}
+          <Card elevated style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={{ gap: 2, flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+                  <Text variant="title" style={{ fontSize: 18 }}>🎯 Target Profit & Automated Close (Stretched SL)</Text>
+                  <Badge
+                    label={autoTargetCloseEnabled ? `🟢 Auto-Close at ${autoTargetRatio}R` : "Milestone Alerts Only"}
+                    tone={autoTargetCloseEnabled ? "positive" : "neutral"}
+                  />
+                </View>
+                <Text variant="caption" tone="secondary">
+                  Continuous background processor monitors open portfolio positions, dispatches real-time milestone alerts to the Trade Channel at 1.0R, 1.5R, and 2.0R, and automatically squares off at your selected profit target.
+                </Text>
+              </View>
+            </View>
+
+            {/* Auto-Close Switch */}
+            <View style={[styles.formRow, { justifyContent: "space-between", alignItems: "center" }]}>
+              <View style={{ flex: 1, paddingRight: spacing.md }}>
+                <Text variant="bodyStrong" style={{ color: colors.textPrimary }}>
+                  Enable Auto-Close at Target
+                </Text>
+                <Text variant="caption" tone="secondary">
+                  When enabled, the background processor will automatically place an exit order once LTP touches or passes your target ratio (Default: 2.0R / 2x SL).
+                </Text>
+              </View>
+              <Switch
+                value={autoTargetCloseEnabled}
+                onValueChange={setAutoTargetCloseEnabled}
+                trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                thumbColor="#ffffff"
+              />
+            </View>
+
+            {/* Target Ratio Selection */}
+            <View style={{ gap: spacing.sm }}>
+              <View style={styles.formRow}>
+                <View style={{ flex: 1 }}>
+                  <Input
+                    label="Auto-Close Target Ratio (R-Multiple)"
+                    value={autoTargetRatio}
+                    onChangeText={setAutoTargetRatio}
+                    keyboardType="numeric"
+                    placeholder="2.0"
+                    rightElement={
+                      <Text variant="caption" tone="muted" style={{ paddingRight: spacing.sm }}>
+                        R (SL Diff)
+                      </Text>
+                    }
+                  />
+                </View>
+
+                <View style={[styles.statBox, { flex: 2 }]}>
+                  <Text variant="caption" tone="muted">Formula (R = |Entry − SL|)</Text>
+                  <Text variant="caption" style={{ color: colors.textPrimary, fontWeight: "600" }}>
+                    BUY: Entry + ({autoTargetRatio} × R) | SELL: Entry − ({autoTargetRatio} × R)
+                  </Text>
+                </View>
+              </View>
+
+              {/* Presets */}
+              <View style={styles.presetsRow}>
+                <Text variant="caption" tone="muted" style={{ marginRight: spacing.xs }}>
+                  Target Presets:
+                </Text>
+                {TARGET_RATIO_PRESETS.map((ratio) => {
+                  const isSelected = Math.abs(Number(autoTargetRatio) - ratio) < 0.05;
+                  return (
+                    <Pressable
+                      key={ratio}
+                      onPress={() => setAutoTargetRatio(String(ratio))}
+                      style={({ hovered }: any) => [
+                        styles.chip,
+                        isSelected && styles.chipActive,
+                        hovered && !isSelected && styles.chipHovered,
+                      ]}
+                    >
+                      <Text
+                        variant="caption"
+                        style={{
+                          fontWeight: "600",
+                          color: isSelected ? "#fff" : colors.textSecondary,
+                        }}
+                      >
+                        {ratio}R {ratio === 2.0 ? "(Default 2x)" : ""}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Milestone Alerts Switch */}
+            <View
+              style={[
+                styles.formRow,
+                {
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  borderTopWidth: 1,
+                  borderTopColor: colors.borderSubtle,
+                  paddingTop: spacing.md,
+                },
+              ]}
+            >
+              <View style={{ flex: 1, paddingRight: spacing.md }}>
+                <Text variant="bodyStrong" style={{ color: colors.textPrimary }}>
+                  Target Milestone Notifications
+                </Text>
+                <Text variant="caption" tone="secondary">
+                  Sends Telegram reminders to the Trade Channel when price reaches 1.0R, 1.5R, and 2.0R profit milestones.
+                </Text>
+              </View>
+              <Switch
+                value={targetMilestoneAlertsEnabled}
+                onValueChange={setTargetMilestoneAlertsEnabled}
+                trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                thumbColor="#ffffff"
               />
             </View>
           </Card>

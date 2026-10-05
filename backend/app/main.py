@@ -8,6 +8,7 @@ from app.database import close_client, ensure_indexes
 from app.routers import alerts, auth, stocks, trading, watchlists
 from app.routers import fyers as fyers_router
 from app.routers import settings as settings_router
+from app.services.portfolio_processor import portfolio_processor
 from app.services.watchlist_processor import watchlist_processor
 
 
@@ -15,8 +16,10 @@ from app.services.watchlist_processor import watchlist_processor
 async def lifespan(app: FastAPI):
     await ensure_indexes()
     watchlist_processor.start()
+    portfolio_processor.start()
     yield
     watchlist_processor.stop()
+    portfolio_processor.stop()
     await close_client()
 
 
@@ -50,4 +53,5 @@ async def health() -> dict:
     return {
         "status": "ok",
         "watchlistProcessor": watchlist_processor.get_status(),
+        "portfolioProcessor": portfolio_processor.get_status(),
     }

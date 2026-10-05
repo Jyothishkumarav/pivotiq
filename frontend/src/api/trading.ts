@@ -49,6 +49,7 @@ export interface ExitPositionPayload {
   symbol: string;
   broker?: string;
   strategy?: string;
+  exitPrice?: number;
 }
 
 export const tradingApi = {

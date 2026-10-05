@@ -7,6 +7,7 @@ import { AutoTradeSettingsCard } from "@/components/AutoTradeSettingsCard";
 import { BrokerFundsCard } from "@/components/BrokerFundsCard";
 import { OrdersBookCard } from "@/components/OrdersBookCard";
 import { QuickTradeModal } from "@/components/QuickTradeModal";
+import { ClosePositionModal } from "@/components/ClosePositionModal";
 import { tradingApi } from "@/api/trading";
 import { colors, layout, radius, spacing } from "@/theme/tokens";
 import { formatCurrency, formatPercent, formatRelativeTime } from "@/utils/format";
@@ -178,12 +179,12 @@ interface SortState {
 }
 
 const HOLDING_COLUMNS: { key: SortKey; label: string; flex: number; align: "flex-start" | "flex-end" }[] = [
-  { key: "time", label: "Entry / Symbol", flex: 2, align: "flex-start" },
+  { key: "time", label: "Entry / Symbol", flex: 2.2, align: "flex-start" },
   { key: "qty", label: "Qty", flex: 0.6, align: "flex-end" },
-  { key: "avg", label: "Avg", flex: 1, align: "flex-end" },
-  { key: "ltp", label: "LTP", flex: 1, align: "flex-end" },
-  { key: "dayChange", label: "Day", flex: 0.9, align: "flex-end" },
-  { key: "pnl", label: "P&L", flex: 1.4, align: "flex-end" },
+  { key: "avg", label: "Avg", flex: 1.0, align: "flex-end" },
+  { key: "ltp", label: "LTP", flex: 1.0, align: "flex-end" },
+  { key: "dayChange", label: "Day", flex: 0.8, align: "flex-end" },
+  { key: "pnl", label: "P&L", flex: 1.3, align: "flex-end" },
 ];
 
 const HOLDING_EXTRACTORS: Record<SortKey, (p: Position) => string | number> = {
@@ -223,6 +224,10 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
         alignItems: "center",
         paddingHorizontal: spacing.lg,
         paddingVertical: spacing.sm,
+        borderLeftWidth: 3,
+        borderLeftColor: "transparent",
+        borderRightWidth: 1,
+        borderRightColor: "transparent",
       }}
     >
       {HOLDING_COLUMNS.map((col) => {
@@ -236,9 +241,8 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
               flexDirection: "row",
               alignItems: "center",
               justifyContent: col.align === "flex-end" ? "flex-end" : "flex-start",
-              gap: 6,
+              gap: 4,
               paddingHorizontal: spacing.xs,
-              paddingRight: col.key === "pnl" ? spacing.md : spacing.xs,
               paddingVertical: 2,
               borderRadius: 4,
               backgroundColor: hovered ? colors.surfaceElevated : "transparent",
@@ -247,7 +251,7 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
             <Text
               variant="caption"
               tone={active ? "accent" : "muted"}
-              style={{ textTransform: "uppercase", letterSpacing: 1 }}
+              style={{ textTransform: "uppercase", letterSpacing: 0.8 }}
             >
               {col.label}
             </Text>
@@ -259,7 +263,11 @@ function HoldingsHeader({ state, onChange }: { state: SortState; onChange: (next
           </Pressable>
         );
       })}
-      <View style={{ width: 124 }} />
+      <View style={{ width: 175, paddingHorizontal: spacing.xs, alignItems: "flex-end", justifyContent: "center" }}>
+        <Text variant="caption" tone="muted" style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>
+          ACTION
+        </Text>
+      </View>
     </View>
   );
 }
@@ -332,8 +340,8 @@ function HoldingRow({
         opacity: isClosing ? 0.5 : isClosed ? 0.8 : 1,
       }}
     >
-      <View style={{ flex: 2, gap: 2 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+      <View style={{ flex: 2.2, paddingHorizontal: spacing.xs, gap: 2 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <Text variant="subtitle">{position.symbol}</Text>
           <Badge label={position.segment === "intraday" ? "MIS" : "CNC"} tone="neutral" />
           <Badge
@@ -355,27 +363,27 @@ function HoldingRow({
         ) : null}
       </View>
 
-      <View style={{ flex: 0.6, alignItems: "flex-end" }}>
+      <View style={{ flex: 0.6, paddingHorizontal: spacing.xs, alignItems: "flex-end" }}>
         <Text variant="mono" tone={isClosed ? "muted" : undefined}>
           {isClosed ? "0" : Math.abs(position.netQty)}
         </Text>
       </View>
 
-      <View style={{ flex: 1, alignItems: "flex-end" }}>
+      <View style={{ flex: 1.0, paddingHorizontal: spacing.xs, alignItems: "flex-end" }}>
         <Text variant="mono">{formatCurrency(position.avgPrice)}</Text>
       </View>
 
-      <View style={{ flex: 1, alignItems: "flex-end" }}>
+      <View style={{ flex: 1.0, paddingHorizontal: spacing.xs, alignItems: "flex-end" }}>
         <Text variant="mono">{formatCurrency(position.ltp)}</Text>
       </View>
 
-      <View style={{ flex: 0.9, alignItems: "flex-end" }}>
+      <View style={{ flex: 0.8, paddingHorizontal: spacing.xs, alignItems: "flex-end" }}>
         <Text variant="mono" tone={isDayUp ? "positive" : "negative"}>
           {formatPercent(position.dayChangePercent)}
         </Text>
       </View>
 
-      <View style={{ flex: 1.4, alignItems: "flex-end", gap: 2, paddingRight: spacing.md }}>
+      <View style={{ flex: 1.3, paddingHorizontal: spacing.xs, alignItems: "flex-end", gap: 2 }}>
         <Text variant="mono" tone={isUp ? "positive" : "negative"}>
           {isUp ? "+" : "−"}
           {formatCurrency(Math.abs(position.pnl))}
@@ -385,29 +393,42 @@ function HoldingRow({
         </Text>
       </View>
 
-      <View style={{ width: 124, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.xs }}>
-        {/* Direct Fyers Web Placement Link */}
-        <Pressable
-          onPress={(e: any) => {
-            e?.stopPropagation?.();
-            openFyersWeb(position.symbol);
-          }}
-          style={({ hovered }: any) => [
-            {
+      <View
+        style={{
+          width: 175,
+          paddingHorizontal: spacing.xs,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: spacing.xs,
+        }}
+      >
+        {/* Max Run Towards Trade Direction */}
+        {position.maxRunPts !== undefined && position.maxRunPts !== null ? (
+          <View
+            style={{
               paddingHorizontal: 6,
               paddingVertical: 3,
               borderRadius: radius.sm,
-              backgroundColor: hovered ? "#1A56DB" : "rgba(37,99,235,0.18)",
+              backgroundColor: position.maxRunPts > 0 ? "rgba(16, 185, 129, 0.14)" : "rgba(100, 116, 139, 0.14)",
               borderWidth: 1,
-              borderColor: hovered ? "#3B82F6" : "rgba(59,130,246,0.35)",
-            },
-          ]}
-          accessibilityLabel={`Place ${position.symbol} on Fyers`}
-        >
-          <Text variant="caption" style={{ color: "#93C5FD", fontWeight: "700", fontSize: 10 }}>
-            Fyers ↗
-          </Text>
-        </Pressable>
+              borderColor: position.maxRunPts > 0 ? "rgba(16, 185, 129, 0.4)" : "rgba(100, 116, 139, 0.3)",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text
+              variant="caption"
+              style={{
+                color: position.maxRunPts > 0 ? "#34D399" : "#94A3B8",
+                fontWeight: "700",
+                fontSize: 10,
+              }}
+            >
+              Max {position.maxRunPts > 0 ? `+${position.maxRunPts}` : "0"} pt{position.maxRunR && position.maxRunR > 0 ? ` (${position.maxRunR}R)` : ""}
+            </Text>
+          </View>
+        ) : null}
 
         {readOnly ? (
           <Text variant="caption" tone="muted" style={{ fontSize: 11 }}>
@@ -428,12 +449,6 @@ function ClosePositionButton({ onPress, disabled }: { onPress: () => void; disab
     <Pressable
       onPress={(e: any) => {
         e?.stopPropagation?.();
-        if (Platform.OS === "web") {
-          const ok = typeof window !== "undefined"
-            ? window.confirm("Square off this position? Market exit order will be executed and any linked SL orders cancelled.")
-            : true;
-          if (!ok) return;
-        }
         onPress();
       }}
       disabled={disabled}
@@ -642,6 +657,7 @@ export default function PortfolioScreen() {
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [quickTradeOpen, setQuickTradeOpen] = useState(false);
+  const [closingPosition, setClosingPosition] = useState<{ position: Position; linkedSl?: number | null } | null>(null);
 
   const {
     data: positions,
@@ -661,13 +677,15 @@ export default function PortfolioScreen() {
   });
 
   const closeMutation = useMutation({
-    mutationFn: (p: Position) =>
+    mutationFn: ({ position, exitPrice }: { position: Position; exitPrice?: number }) =>
       tradingApi.exitPosition({
-        symbol: p.symbol,
+        symbol: position.symbol,
         broker,
         strategy: "portfolio_manual",
+        exitPrice,
       }),
     onSuccess: () => {
+      setClosingPosition(null);
       queryClient.invalidateQueries({ queryKey: ["positions"] });
       queryClient.invalidateQueries({ queryKey: ["portfolio-summary"] });
       queryClient.invalidateQueries({ queryKey: ["trades-orders"] });
@@ -921,8 +939,8 @@ export default function PortfolioScreen() {
                       position={p}
                       linkedSl={activeSlPrice}
                       readOnly={!!retestDate}
-                      onClose={() => closeMutation.mutate(p)}
-                      isClosing={closeMutation.isPending && closeMutation.variables?.symbol === p.symbol}
+                      onClose={() => setClosingPosition({ position: p, linkedSl: activeSlPrice })}
+                      isClosing={closeMutation.isPending && closeMutation.variables?.position.symbol === p.symbol}
                     />
                   );
                 })}
@@ -945,6 +963,20 @@ export default function PortfolioScreen() {
         visible={quickTradeOpen}
         onClose={() => setQuickTradeOpen(false)}
         activeBroker={broker}
+      />
+
+      {/* Close Position Modal with Target / LTP Price Selection */}
+      <ClosePositionModal
+        visible={closingPosition !== null}
+        position={closingPosition?.position || null}
+        linkedSl={closingPosition?.linkedSl}
+        onClose={() => setClosingPosition(null)}
+        onConfirm={(exitPrice) => {
+          if (closingPosition) {
+            closeMutation.mutate({ position: closingPosition.position, exitPrice });
+          }
+        }}
+        isClosing={closeMutation.isPending}
       />
     </Screen>
   );
